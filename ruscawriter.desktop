@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=RuscaWriter
+GenericName=Editor di scrittura
+GenericName[en]=Writing editor
+Comment=Editor di scrittura a tre colonne per testi e saggistica
+Comment[en]=Three-column writing editor for texts and non-fiction
+Exec=ruscawriter %f
+Icon=ruscawriter
+Terminal=false
+Categories=Office;WordProcessor;Utility;
+MimeType=application/x-ruscawriter;
+Keywords=scrittura;saggistica;editor;writing;nonfiction;
+StartupNotify=true

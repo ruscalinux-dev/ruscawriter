@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+
+# Ambienti virtuali
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# File di progetto RuscaWriter generati durante le prove
+*.rwr
+
+# Pacchetti generati
+*.deb
+
+# Sistemi operativi / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
