@@ -35,3 +35,4 @@ Thumbs.db
 .vscode/
 build-deb/
 *.deb
+SHA256SUMS
