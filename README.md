@@ -2,6 +2,8 @@
 
 🇮🇹 [Leggilo in italiano](README.it.md)
 
+![RuscaWriter — write in Markdown, export a finished book](docs/ruscawriter_before_after.png)
+
 Three-column writing editor (chapters · text · notes) from the **RuscaLinux**
 project. Designed for texts and general non-fiction, with export to many
 formats and an interface in 40 languages. Free software under the GNU
