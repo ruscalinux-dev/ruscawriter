@@ -33,3 +33,5 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+build-deb/
+*.deb
