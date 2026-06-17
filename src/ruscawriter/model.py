@@ -20,13 +20,56 @@ import tempfile
 
 # --- costanti applicative condivise -----------------------------------------
 APP_NAME = "RuscaWriter"
-APP_VERSION = "0.1"
+APP_VERSION = "0.2 (2026-06-14)"
+# numero di versione "nudo" (senza data), per i punti in cui la data e' gia'
+# mostrata a parte, come la schermata Informazioni
+APP_VERSION_SHORT = "0.2"
 APP_AUTHOR = "ruscalinux-dev"
 
 # Campi strutturati del frontespizio e del colophon. L'ordine e' anche l'ordine
 # di impaginazione. Tutti i campi sono opzionali: quelli vuoti non compaiono.
 FRONT_FIELDS = ["title", "subtitle", "author", "publisher", "place_year"]
 COLO_FIELDS = ["copyright", "publisher", "isbn", "edition", "notes", "license"]
+
+# Formati pagina disponibili per l'esportazione PDF. Dimensioni in punti
+# tipografici (1/72 di pollice), come richiede il formato PDF. 1 cm ~= 28,35 pt;
+# 1 pollice = 72 pt.
+#   A5            = 148 x 210 mm  -> 420   x 595   pt  (narrativa/saggistica EU)
+#   6x9 pollici   = 152 x 229 mm  -> 432   x 648   pt  (standard internaz./POD)
+#   17x24 cm      = 170 x 240 mm  -> 482   x 680   pt  (saggistica densa/accademica)
+#   A4            = 210 x 297 mm  -> 595   x 842   pt  (manuali, documenti, bozze)
+#   5x8 pollici   = 127 x 203 mm  -> 360   x 576   pt  (tascabile narrativa)
+#
+# Ogni formato porta i propri margini, distinti tra:
+#   inner  : margine INTERNO, lato rilegatura (piu' largo, cosi' il testo non
+#            sparisce nella piega di una copertina incollata o cucita);
+#   outer  : margine ESTERNO, lato del taglio (piu' stretto);
+#   margin : margine verticale (alto/basso), uniforme.
+# Sulle pagine recto (dispari) l'interno e' a sinistra, sul verso (pari) a
+# destra: l'export se ne occupa da solo spostando il blocco di testo.
+PDF_PAGE_SIZES = {
+    "A5":    {"w": 420.0, "h": 595.0,
+              "inner": 60.0, "outer": 42.0, "margin": 54.0},
+    "6x9":   {"w": 432.0, "h": 648.0,
+              "inner": 64.0, "outer": 45.0, "margin": 58.0},
+    "17x24": {"w": 482.0, "h": 680.0,
+              "inner": 70.0, "outer": 50.0, "margin": 62.0},
+    "A4":    {"w": 595.0, "h": 842.0,
+              "inner": 85.0, "outer": 65.0, "margin": 72.0},
+    "5x8":   {"w": 360.0, "h": 576.0,
+              "inner": 54.0, "outer": 38.0, "margin": 50.0},
+}
+PDF_DEFAULT_PAGE_SIZE = "A5"
+
+# Etichette leggibili dei formati, per il menu di scelta nell'interfaccia.
+PDF_PAGE_SIZE_LABELS = {
+    "A5":    "A5 (14,8 \u00d7 21 cm)",
+    "6x9":   "6\u00d79\" (15,2 \u00d7 22,9 cm)",
+    "17x24": "17 \u00d7 24 cm",
+    "A4":    "A4 (21 \u00d7 29,7 cm)",
+    "5x8":   "5\u00d78\" (12,7 \u00d7 20,3 cm)",
+}
+
 TYPEWRITER_FAMILY = "Courier Prime"
 TYPEWRITER_FILE = "CourierPrime-Regular.ttf"
 # varianti per il rendering di grassetto/corsivo nel PDF
@@ -485,12 +528,15 @@ def write_pdf(path, chapters, title="",
               chapter_titles=None, toc_label="Indice",
               font_size=12, leading=16,
               page_w=595.0, page_h=842.0,   # A4 in punti
-              margin=72.0,                  # ~2.54 cm
+              margin=72.0,                  # ~2.54 cm (margine uniforme di base)
+              margin_inner=None,            # margine interno (lato rilegatura)
+              margin_outer=None,            # margine esterno (lato taglio)
               page_break_per_chapter=True,
               embed_fonts=None, embed_font_name="CourierPrime",
               cover_image=None,
               frontispiece_paragraphs=None,
-              colophon_paragraphs=None):
+              colophon_paragraphs=None,
+              blank_cover=False):
     """
     Scrive un PDF usando solo la libreria standard, con markdown di base.
       chapters : lista di capitoli; ogni capitolo = lista di paragrafi (str).
@@ -513,7 +559,20 @@ def write_pdf(path, chapters, title="",
     def seg_w(s, size):
         return _text_width(s, size, adv, widths_map)
 
-    usable_w = page_w - 2 * margin
+    # --- margini: interno (rilegatura) ed esterno (taglio) -----------------
+    # Se non specificati, ripiegano sul margine uniforme 'margin', cosi' il
+    # comportamento storico resta invariato. Quando differiscono, le pagine
+    # dispari (recto) hanno il margine interno a SINISTRA e quelle pari (verso)
+    # a DESTRA: il testo viene impaginato con un margine sinistro di base pari
+    # al margine ESTERNO, e all'emissione viene traslato a destra del 'gutter'
+    # (interno - esterno) sulle pagine recto. Cosi' i calcoli X esistenti
+    # restano validi e basta spostare in blocco l'intera pagina.
+    m_inner = margin if margin_inner is None else margin_inner
+    m_outer = margin if margin_outer is None else margin_outer
+    gutter = m_inner - m_outer          # spostamento extra del lato interno
+    left_margin = m_outer               # margine sinistro di impaginazione (base)
+
+    usable_w = page_w - (m_inner + m_outer)
     top_y = page_h - margin
     bottom_y = margin
     header_gap = leading * 1.6
@@ -653,8 +712,16 @@ def write_pdf(path, chapters, title="",
         jpeg_bytes, img_w, img_h = cover_image
         pages.append(([], ("image", jpeg_bytes, img_w, img_h)))
 
+    # 0-bis) copertina BIANCA e VUOTA: nessuna immagine e campi editoriali
+    # vuoti. Si emette comunque una pagina (presente nel PDF) ma senza alcuna
+    # grafica vettoriale e senza testo: pagina completamente bianca, senza
+    # numero. Esclude la copertina stilizzata sottostante.
+    blank_cover_now = blank_cover and cover_image is None
+    if blank_cover_now:
+        flush_page("plain")   # pagina vuota, senza cornice e senza numero
+
     # 1) pagina copertina stilizzata (grafica + testo) solo senza immagine
-    if cover_paragraphs is not None and cover_image is None:
+    if cover_paragraphs is not None and cover_image is None and not blank_cover_now:
         # raccoglie le righe non vuote della copertina conservando l'ordine.
         # convenzione del progetto: 1a riga = TITOLO, ultima = data,
         # le righe intermedie = autore (ed eventuale sottotitolo).
@@ -756,7 +823,7 @@ def write_pdf(path, chapters, title="",
                     if y < bottom_y:
                         flush_page()
                         pages_so_far += 1
-                    cur_lines.append((margin + indent, y, run_line, sz))
+                    cur_lines.append((left_margin + indent, y, run_line, sz))
                     y -= line_leading
                 if extra:
                     y -= extra
@@ -803,11 +870,11 @@ def write_pdf(path, chapters, title="",
             dot_w = seg_w(".", font_size)
             if avail > dot_w and dot_w > 0:
                 dots = "." * int(avail / dot_w)
-            cur_lines.append((margin, yy, [(left + " ", "regular")], font_size))
+            cur_lines.append((left_margin, yy, [(left + " ", "regular")], font_size))
             if dots:
-                cur_lines.append((margin + lw + seg_w(" ", font_size), yy,
+                cur_lines.append((left_margin + lw + seg_w(" ", font_size), yy,
                                   [(dots, "regular")], font_size))
-            cur_lines.append((page_w - margin - rw, yy,
+            cur_lines.append((page_w - m_outer - rw, yy,
                               [(right, "regular")], font_size))
             yy -= leading * 1.4
             if yy < bottom_y:
@@ -936,11 +1003,21 @@ def write_pdf(path, chapters, title="",
         if kind == "cover":
             # grafica vettoriale della copertina prima del testo
             parts.extend(_cover_graphics_ops(page_w, page_h))
+        # spostamento orizzontale per la rilegatura: sulle pagine di contenuto
+        # numerate, il recto (pagina fisica dispari) ha il margine interno a
+        # sinistra, quindi il blocco di testo si sposta a destra del 'gutter';
+        # il verso (pagina pari) resta al margine esterno. Header e numero di
+        # pagina restano centrati sulla pagina fisica e NON vengono spostati.
+        page_shift = 0.0
+        if kind is None and gutter:
+            physical_page = i + 1           # 1 = prima pagina fisica (recto)
+            if physical_page % 2 == 1:      # recto: interno a sinistra
+                page_shift = gutter
         parts.append(b"BT")
         cur_fid = None
         cur_size = None
         for (x, ly, runs, sz) in lines:
-            parts.append(f"1 0 0 1 {x:.2f} {ly:.2f} Tm".encode("latin-1"))
+            parts.append(f"1 0 0 1 {x + page_shift:.2f} {ly:.2f} Tm".encode("latin-1"))
             for (text, style) in runs:
                 if text == "":
                     continue
@@ -1625,6 +1702,17 @@ class Project:
     def has_frontispiece(self):
         return any(v.strip() for v in self.frontispiece_fields.values())
 
+    def cover_is_blank(self):
+        """True se la copertina esportata deve risultare BIANCA e VUOTA:
+        nessuna immagine di copertina E tutti i campi delle Sezioni editoriali
+        del frontespizio (titolo, sottotitolo, autore, editore) vuoti.
+        In questo caso l'export non disegna la grafica della copertina ne'
+        ripiega sul titolo del progetto: la pagina resta completamente bianca."""
+        if self.has_cover_image():
+            return False
+        f = getattr(self, "frontispiece_fields", {}) or {}
+        return not any(str(v).strip() for v in f.values())
+
     def has_colophon(self):
         return any(v.strip() for v in self.colophon_fields.values())
 
@@ -1865,6 +1953,10 @@ class Project:
                 # con immagine di copertina: mostra l'immagine a piena larghezza
                 h.append(f'<div class="cover-image"><img src="{esc(image_src)}" '
                          f'alt="{esc(title)}"/></div>')
+            elif self.cover_is_blank():
+                # campi Sezioni editoriali vuoti e nessuna immagine:
+                # copertina bianca e vuota
+                pass
             else:
                 h.append(f'<h1 class="title">{esc(title)}</h1>')
                 for mid in cover_lines[1:-1]:
@@ -2306,11 +2398,15 @@ class Project:
 
 
     def export_pdf(self, path, font_size=12, embed_fonts=None,
-                   embed_font_name="CourierPrime"):
+                   embed_font_name="CourierPrime", page_size="A4"):
         """Salva in PDF con markdown di base. Se embed_fonts e' fornito (dict
         stile->metrics), il testo usa il font del documento incorporato e rende
         grassetto/corsivo. La copertina e' una pagina senza numero; la
-        numerazione parte da 1 dalla pagina successiva."""
+        numerazione parte da 1 dalla pagina successiva.
+
+        page_size sceglie il formato pagina: "A4" (predefinito) o "A5". Le
+        dimensioni e il margine vengono presi da PDF_PAGE_SIZES; un valore non
+        riconosciuto ripiega su A4."""
         cover_paragraphs = None
         chapters_paragraphs = []
         chapter_titles = []
@@ -2333,19 +2429,27 @@ class Project:
         cover_img = None
         if self.cover_image:
             cover_img = _prepare_cover_jpeg(self.cover_image, self.cover_image_fmt)
+        # copertina bianca e vuota se non c'e' immagine e i campi delle
+        # Sezioni editoriali del frontespizio sono tutti vuoti
+        blank_cover = self.cover_is_blank()
         # frontespizio/colophon come righe con stile (testo, ruolo)
         front = self._front_lines() or None
         colo = self._colophon_lines() or None
+        # dimensioni e margini del formato pagina scelto (ripiego su default)
+        spec = PDF_PAGE_SIZES.get(page_size, PDF_PAGE_SIZES[PDF_DEFAULT_PAGE_SIZE])
         write_pdf(path, chapters_paragraphs, title=self.title,
                   cover_paragraphs=cover_paragraphs,
                   chapter_titles=chapter_titles,
                   toc_label=self.t_index_label(),
                   font_size=font_size, leading=leading,
+                  page_w=spec["w"], page_h=spec["h"], margin=spec["margin"],
+                  margin_inner=spec.get("inner"), margin_outer=spec.get("outer"),
                   page_break_per_chapter=True,
                   embed_fonts=embed_fonts, embed_font_name=embed_font_name,
                   cover_image=cover_img,
                   frontispiece_paragraphs=front,
-                  colophon_paragraphs=colo)
+                  colophon_paragraphs=colo,
+                  blank_cover=blank_cover)
 
     def _make_cover_png(self, cover_lines, width=600, height=900):
         """Genera i byte di un'immagine PNG di copertina (raster), necessaria
@@ -2481,6 +2585,29 @@ class Project:
         sig = b"\x89PNG\r\n\x1a\n"
         ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
         idat = zlib.compress(bytes(raw), 9)
+        return (sig + chunk(b"IHDR", ihdr)
+                + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
+
+    @staticmethod
+    def _make_blank_cover_png(width=600, height=900):
+        """Crea un PNG completamente BIANCO (nessuna cornice, nessun filetto,
+        nessun testo), usando solo zlib e struct. Usato come copertina
+        e-book quando i campi delle Sezioni editoriali sono vuoti e non c'e'
+        un'immagine di copertina: il risultato e' una copertina bianca e vuota."""
+        import zlib, struct
+
+        # ogni riga: 1 byte di filtro 'None' + width pixel RGB bianchi
+        white_row = b"\x00" + (b"\xff\xff\xff" * width)
+        raw = white_row * height
+
+        def chunk(typ, data):
+            c = struct.pack(">I", len(data)) + typ + data
+            c += struct.pack(">I", zlib.crc32(typ + data) & 0xffffffff)
+            return c
+
+        sig = b"\x89PNG\r\n\x1a\n"
+        ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
+        idat = zlib.compress(raw, 9)
         return (sig + chunk(b"IHDR", ihdr)
                 + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
 
@@ -2625,6 +2752,12 @@ class Project:
             cover_img_bytes = self.cover_image
             cover_img_name = "cover.jpg" if self.cover_image_fmt == "jpeg" else "cover.png"
             cover_img_mime = self._cover_image_mime()
+        elif self.cover_is_blank():
+            # campi Sezioni editoriali vuoti e nessuna immagine: copertina
+            # bianca e vuota (PNG completamente bianco, senza testo ne' grafica)
+            cover_img_bytes = self._make_blank_cover_png()
+            cover_img_name = "cover.png"
+            cover_img_mime = "image/png"
         else:
             cover_img_bytes = self._make_cover_png(cl)
             cover_img_name = "cover.png"

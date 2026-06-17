@@ -43,6 +43,8 @@
   "dlg_save_title": "Save project",
   "dlg_export_title": "Export to TXT",
   "dlg_export_pdf_title": "Export to PDF",
+  "dlg_pdf_size_title": "पृष्ठ स्वरूप",
+  "dlg_pdf_size_body": "PDF साठी पृष्ठ स्वरूप निवडा.",
   "filter_pdf": "PDF documents (*.pdf)",
   "err_open": "Could not open the project:\n{e}",
   "err_save": "Error while saving:\n{e}",

@@ -90,11 +90,12 @@ HAVE_GTKSPELL = HAVE_SPELL   # nome storico mantenuto per compatibilita'
 from . import paths
 from . import model as pw_model
 from .model import (
-    APP_NAME, APP_VERSION, APP_AUTHOR,
+    APP_NAME, APP_VERSION, APP_VERSION_SHORT, APP_AUTHOR,
     TYPEWRITER_FAMILY, TYPEWRITER_FILE, TYPEWRITER_FILES,
     SERIF_FAMILY, SERIF_FILE, SERIF_FILES,
     MIN_FONT_SIZE, MAX_FONT_SIZE,
     FRONT_FIELDS, COLO_FIELDS,
+    PDF_PAGE_SIZES, PDF_DEFAULT_PAGE_SIZE, PDF_PAGE_SIZE_LABELS,
     Chapter, Project, write_pdf, read_ttf_metrics,
 )
 from .model import (
@@ -111,8 +112,14 @@ APP_ID = "org.ruscalinux.RuscaWriter"
 # Indirizzi pubblici del progetto, mostrati nel dialogo Informazioni.
 APP_WEBSITE = "https://www.ruscalinux.org/ruscawriter/"
 APP_SOURCE = "https://github.com/ruscalinux-dev/ruscawriter"
-APP_DATE_IT = "9 Giugno 2026"
-APP_DATE_EN = "June 9, 2026"
+# Data di rilascio di questa build (anno, mese, giorno). La rappresentazione
+# leggibile viene composta nella lingua dell'interfaccia tramite i nomi dei mesi
+# tradotti (chiavi "month_1"... "month_12") e il pattern "date_format" presenti
+# nei file di lingua; in mancanza, si ripiega sull'inglese e infine sull'ISO.
+APP_DATE = (2026, 6, 14)
+# stringhe di riserva (usate solo se mancano le chiavi tradotte dei mesi)
+APP_DATE_IT = "14 Giugno 2026"
+APP_DATE_EN = "June 14, 2026"
 
 ICON_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
@@ -134,13 +141,28 @@ ICON_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width
       <stop offset="0"   stop-color="#FFF3C4"/>
       <stop offset="1"   stop-color="#C68A1C"/>
     </linearGradient>
+    <linearGradient id="bgA" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0"   stop-color="#6E1024"/>
+      <stop offset="0.55" stop-color="#4A0A18"/>
+      <stop offset="1"   stop-color="#2C0610"/>
+    </linearGradient>
+    <radialGradient id="bgAglow" cx="0.32" cy="0.26" r="0.8">
+      <stop offset="0"   stop-color="#E27486" stop-opacity="0.45"/>
+      <stop offset="0.5" stop-color="#E27486" stop-opacity="0.10"/>
+      <stop offset="1"   stop-color="#E27486" stop-opacity="0"/>
+    </radialGradient>
   </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bgA)"/>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bgAglow)"/>
+  <rect x="2.6" y="2.6" width="58.8" height="58.8" rx="14.4" fill="none"
+        stroke="url(#goldB)" stroke-width="1" opacity="0.55"/>
   <g transform="rotate(-42 32 32)">
     <rect x="25.2" y="8.6" width="13.6" height="48" rx="6"
-          fill="#000000" opacity="0.10" transform="translate(1.4,1.8)"/>
+          fill="#000000" opacity="0.22" transform="translate(1.8,2.2)"/>
     <rect x="25" y="8" width="14" height="19" rx="5.5" fill="url(#body)"/>
     <rect x="26.4" y="9.5" width="3.4" height="16" rx="1.7" fill="url(#bodyHi)"/>
-    <rect x="27.5" y="6.4" width="9" height="3.2" rx="1.6" fill="#1A1012"/>
+    <rect x="27.5" y="6.4" width="9" height="3.2" rx="1.6" fill="url(#goldB)"/>
+    <rect x="27.5" y="6.6" width="9" height="1" rx="0.5" fill="#FFF3C4" opacity="0.7"/>
     <rect x="25" y="11.4" width="14" height="2.4" fill="url(#goldB)"/>
     <rect x="30.9" y="13.6" width="2.2" height="10.5" rx="1.1" fill="url(#gold)"/>
     <circle cx="32" cy="24" r="1.7" fill="url(#gold)"/>
@@ -432,7 +454,7 @@ def ensure_elision_dictionaries(locales):
 
 class RuscaWriterWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title=f"{APP_NAME} {APP_VERSION}")
+        super().__init__(application=app, title=f"{APP_NAME} v{APP_VERSION}")
         self.app = app
         self.settings = load_settings()
         w = self.settings.get("win_w", 1200)
@@ -472,6 +494,12 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self.theme_pref = self.settings.get("theme", "auto")
         self.dark_mode = self._resolve_dark(self.theme_pref)
         self._is_fullscreen = False
+
+        # ultimo formato pagina PDF usato (ricordato tra le sessioni); se il
+        # valore salvato non e' tra quelli validi, ripiega sul predefinito.
+        saved_size = self.settings.get("pdf_page_size", PDF_DEFAULT_PAGE_SIZE)
+        self._pdf_page_size = (saved_size if saved_size in PDF_PAGE_SIZES
+                               else PDF_DEFAULT_PAGE_SIZE)
 
         # Evita che gli entry/spinbutton selezionino tutto il testo quando
         # ricevono il focus (in GTK 4 e' il comportamento predefinito): senza
@@ -539,7 +567,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self._update_window_title()
 
     def _update_window_title(self):
-        base = f"{APP_NAME} {APP_VERSION}"
+        base = f"{APP_NAME} v{APP_VERSION}"
         proj = getattr(self.project, "title", "") or ""
         if proj:
             if self._dirty:
@@ -606,9 +634,39 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
     def t(self, key, **kw):
         return self.translator.t(key, **kw)
 
+    def _t_or(self, key, default, **kw):
+        """Come t(), ma se la chiave non e' presente nei file di lingua
+        (t() ripiegherebbe sulla chiave grezza) usa il testo 'default'.
+        Serve per voci nuove non ancora tradotte: l'interfaccia mostra
+        comunque un testo sensato, e quando il JSON conterra' la chiave
+        verra' usata la traduzione."""
+        val = self.translator.t(key, **kw)
+        if val == key:
+            return default.format(**kw) if kw else default
+        return val
+
     @property
     def app_date(self):
-        return APP_DATE_IT if self.lang == "it" else APP_DATE_EN
+        """Data di rilascio nella lingua dell'interfaccia.
+
+        Compone giorno/mese/anno usando il nome del mese tradotto
+        ("month_1".."month_12") e il pattern "date_format" (con i segnaposto
+        {d}=giorno, {m}=mese, {y}=anno). Se queste chiavi non sono presenti
+        nella lingua scelta, il Translator ripiega sull'inglese; se mancano
+        anche li', si usano le stringhe storiche IT/EN e infine l'ISO."""
+        year, month, day = APP_DATE
+        month_name = self.translator.t(f"month_{month}")
+        # se la chiave del mese non e' tradotta (t() restituisce la chiave
+        # stessa) ripieghiamo sulle stringhe storiche
+        if month_name == f"month_{month}":
+            return APP_DATE_IT if self.lang == "it" else APP_DATE_EN
+        fmt = self.translator.t("date_format")
+        if fmt == "date_format":
+            fmt = "{d} {m} {y}"     # ripiego neutro: "14 Giugno 2026"
+        try:
+            return fmt.format(d=day, m=month_name, y=year)
+        except Exception:
+            return f"{day} {month_name} {year}"
 
     # ---- stile --------------------------------------------------------------
     def _system_prefers_dark(self):
@@ -2788,7 +2846,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         import datetime
         copyright_line = "Copyright © %d %s" % (
             datetime.date.today().year, APP_AUTHOR)
-        detail = (self.t("info_secondary", v=APP_VERSION, d=self.app_date,
+        detail = (self.t("info_secondary", v=APP_VERSION_SHORT, d=self.app_date,
                          a=APP_AUTHOR, app=APP_NAME, copyright=copyright_line)
                   + "\n\n" + spell_state)
 
@@ -2877,9 +2935,134 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
 
     def on_export_pdf(self, *_):
         self._commit_current()
-        self._save_file_dialog(self.t("dlg_export_pdf_title"),
-                               f"{self.project.title}.pdf", ["*.pdf"],
-                               self.t("filter_pdf"), self._do_export_pdf)
+        # Dialogo di scelta del formato pagina: i formati sono molti (5), quindi
+        # li disponiamo in COLONNA. Ogni riga mostra una piccola ANTEPRIMA delle
+        # proporzioni del formato (un rettangolo in scala) accanto al pulsante
+        # con l'etichetta. Il formato ricordato dall'ultima volta e' evidenziato
+        # e ha il focus. Alla scelta salviamo la preferenza e proseguiamo col
+        # normale salvataggio del file.
+        sizes = list(PDF_PAGE_SIZES.keys())
+        current = getattr(self, "_pdf_page_size", PDF_DEFAULT_PAGE_SIZE)
+        if current not in PDF_PAGE_SIZES:
+            current = PDF_DEFAULT_PAGE_SIZE
+
+        def choose(size_key):
+            self._pdf_page_size = size_key
+            # ricorda la scelta tra le sessioni
+            self.settings["pdf_page_size"] = size_key
+            try:
+                save_settings(self.settings)
+            except Exception:
+                pass
+            self._save_file_dialog(self.t("dlg_export_pdf_title"),
+                                   f"{self.project.title}.pdf", ["*.pdf"],
+                                   self.t("filter_pdf"), self._do_export_pdf)
+
+        dialog = Gtk.Window(transient_for=self, modal=True)
+        dialog.add_css_class("rusca-dialog")
+        dialog.set_title(self._t_or("dlg_pdf_size_title", "Formato pagina"))
+        dialog.set_resizable(False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_top(16); box.set_margin_bottom(16)
+        box.set_margin_start(20); box.set_margin_end(20)
+        box.add_css_class("rusca-bg")
+
+        head = Gtk.Label()
+        head.set_markup("<b>%s</b>" % GLib.markup_escape_text(
+            self._t_or("dlg_pdf_size_title", "Formato pagina")))
+        head.add_css_class("rusca-dialog-text")
+        head.set_xalign(0.5)
+        box.append(head)
+
+        hint = Gtk.Label(label=self._t_or(
+            "dlg_pdf_size_body", "Scegli il formato della pagina per il PDF."))
+        hint.add_css_class("rusca-dialog-text")
+        hint.set_wrap(True); hint.set_justify(Gtk.Justification.CENTER)
+        hint.set_xalign(0.5); hint.set_max_width_chars(40)
+        box.append(hint)
+
+        state = {"done": False}
+
+        def finish(size_key):
+            if state["done"]:
+                return
+            state["done"] = True
+            dialog.destroy()
+            if size_key is not None:
+                GLib.idle_add(lambda: (choose(size_key), False)[1])
+
+        # altezza dell'anteprima in pixel: il rettangolo piu' alto (formato piu'
+        # allungato) occupa quasi tutta questa altezza; gli altri in proporzione.
+        PREVIEW_H = 46
+        PREVIEW_BOX = 56   # larghezza dell'area di disegno (spazio per i formati larghi)
+        max_h = max(s["h"] for s in PDF_PAGE_SIZES.values())
+
+        def make_preview(spec, highlight):
+            area = Gtk.DrawingArea()
+            area.set_content_width(PREVIEW_BOX)
+            area.set_content_height(PREVIEW_H + 6)
+
+            def draw(_a, cr, w, h, *_):
+                # scala il formato cosi' che l'altezza massima entri in PREVIEW_H
+                scale = PREVIEW_H / max_h
+                rw = spec["w"] * scale
+                rh = spec["h"] * scale
+                x = (w - rw) / 2.0
+                y = (h - rh) / 2.0
+                # colore: prugna se evidenziato, grigio altrimenti
+                if highlight:
+                    cr.set_source_rgb(0.557, 0.271, 0.522)   # #8E4585
+                else:
+                    cr.set_source_rgb(0.60, 0.60, 0.60)
+                cr.set_line_width(1.5)
+                cr.rectangle(x, y, rw, rh)
+                cr.stroke_preserve()
+                # leggero riempimento
+                if highlight:
+                    cr.set_source_rgba(0.557, 0.271, 0.522, 0.12)
+                else:
+                    cr.set_source_rgba(0.60, 0.60, 0.60, 0.08)
+                cr.fill()
+
+            area.set_draw_func(draw)
+            return area
+
+        default_btn = None
+        for key in sizes:
+            spec = PDF_PAGE_SIZES[key]
+            is_current = (key == current)
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.append(make_preview(spec, is_current))
+
+            label = PDF_PAGE_SIZE_LABELS.get(key, key)
+            b = Gtk.Button(label=label)
+            b.set_hexpand(True)
+            if is_current:
+                b.add_css_class("suggested-action")
+                default_btn = b
+            b.connect("clicked", lambda _w, k=key: finish(k))
+            row.append(b)
+            box.append(row)
+
+        cancel = Gtk.Button(label=self.t("btn_cancel"))
+        cancel.connect("clicked", lambda _w: finish(None))
+        box.append(cancel)
+
+        dialog.set_child(box)
+        if default_btn is not None:
+            dialog.set_default_widget(default_btn)
+
+        def on_close_req(*_):
+            if not state["done"]:
+                finish(None)
+            return False
+
+        dialog.connect("close-request", on_close_req)
+        dialog.present()
+        GLib.idle_add(self._raise_dialog, dialog)
+        if default_btn is not None:
+            default_btn.grab_focus()
 
     def _do_export_pdf(self, path):
         if not path.endswith(".pdf"):
@@ -2906,7 +3089,9 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
                 if "regular" not in embed_fonts:
                     embed_fonts = None
             self.project.export_pdf(path, font_size=self.font_size,
-                                    embed_fonts=embed_fonts, embed_font_name=fname)
+                                    embed_fonts=embed_fonts, embed_font_name=fname,
+                                    page_size=getattr(self, "_pdf_page_size",
+                                                      PDF_DEFAULT_PAGE_SIZE))
             self._info(self.t("exported", p=path))
         except Exception as exc:
             self._error(self.t("err_export", e=exc))
@@ -2990,7 +3175,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         tex = load_texture(160)
         dialog = Gtk.Window(transient_for=self, modal=True)
         dialog.add_css_class("rusca-dialog")
-        dialog.set_title(f"{APP_NAME} {APP_VERSION}")
+        dialog.set_title(f"{APP_NAME} v{APP_VERSION}")
         dialog.set_default_size(420, 360)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_top(24); box.set_margin_bottom(24)

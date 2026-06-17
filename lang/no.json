@@ -43,6 +43,8 @@
   "dlg_save_title": "Save project",
   "dlg_export_title": "Export to TXT",
   "dlg_export_pdf_title": "Export to PDF",
+  "dlg_pdf_size_title": "Sideformat",
+  "dlg_pdf_size_body": "Velg sideformat for PDF-en.",
   "filter_pdf": "PDF documents (*.pdf)",
   "err_open": "Could not open the project:\n{e}",
   "err_save": "Error while saving:\n{e}",

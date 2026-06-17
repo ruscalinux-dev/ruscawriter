@@ -42,6 +42,8 @@
   "dlg_save_title": "Guardar projeto",
   "dlg_export_title": "Exportar para TXT",
   "dlg_export_pdf_title": "Exportar para PDF",
+  "dlg_pdf_size_title": "Formato da página",
+  "dlg_pdf_size_body": "Escolha o formato da página para o PDF.",
   "filter_pdf": "Documentos PDF (*.pdf)",
   "err_open": "Não foi possível abrir o projeto:\n{e}",
   "err_save": "Erro ao guardar:\n{e}",
@@ -171,5 +173,18 @@
   "empty_hint": "Crie um capítulo para começar a escrever (Capítulo → Novo capítulo)",
   "grp_work": "Dados da obra",
   "grp_pub": "Publicação",
-  "filter_project": "Projetos RuscaWriter (*.rwr)"
+  "filter_project": "Projetos RuscaWriter (*.rwr)",
+  "month_1": "janeiro",
+  "month_2": "fevereiro",
+  "month_3": "março",
+  "month_4": "abril",
+  "month_5": "maio",
+  "month_6": "junho",
+  "month_7": "julho",
+  "month_8": "agosto",
+  "month_9": "setembro",
+  "month_10": "outubro",
+  "month_11": "novembro",
+  "month_12": "dezembro",
+  "date_format": "{d} de {m} de {y}"
 }

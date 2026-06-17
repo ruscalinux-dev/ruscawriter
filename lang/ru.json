@@ -42,6 +42,8 @@
   "dlg_save_title": "Сохранить проект",
   "dlg_export_title": "Экспорт в TXT",
   "dlg_export_pdf_title": "Экспорт в PDF",
+  "dlg_pdf_size_title": "Формат страницы",
+  "dlg_pdf_size_body": "Выберите формат страницы для PDF.",
   "filter_pdf": "Документы PDF (*.pdf)",
   "err_open": "Не удалось открыть проект:\n{e}",
   "err_save": "Ошибка при сохранении:\n{e}",
@@ -171,5 +173,18 @@
   "empty_hint": "Создайте главу, чтобы начать писать (Глава → Новая глава)",
   "grp_work": "Сведения о произведении",
   "grp_pub": "Издание",
-  "filter_project": "Проекты RuscaWriter (*.rwr)"
+  "filter_project": "Проекты RuscaWriter (*.rwr)",
+  "month_1": "января",
+  "month_2": "февраля",
+  "month_3": "марта",
+  "month_4": "апреля",
+  "month_5": "мая",
+  "month_6": "июня",
+  "month_7": "июля",
+  "month_8": "августа",
+  "month_9": "сентября",
+  "month_10": "октября",
+  "month_11": "ноября",
+  "month_12": "декабря",
+  "date_format": "{d} {m} {y}"
 }
