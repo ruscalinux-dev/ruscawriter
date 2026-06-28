@@ -17,7 +17,7 @@
   "tip_toggle_right": "Notizspalte ein-/ausblenden",
   "tip_font_size": "Textgröße (Strg + / Strg -)",
   "tip_spell_lang": "Sprache der Rechtschreibprüfung",
-  "spell_unavailable": "Die Rechtschreibprüfung ist nicht aktiv.\nDetail: {e}\n\nUnter Debian/Ubuntu installieren:\nsudo apt install gir1.2-libspelling-1 hunspell-de hunspell-en-us",
+  "spell_unavailable": "Die Rechtschreibprüfung ist nicht aktiv.\nDetail: {e}\n\nUnter Debian/Ubuntu installieren:\nsudo apt install gir1.2-spelling-1 hunspell-de hunspell-en-us",
   "font_label": "Aa",
   "setdate_only_cover": "Wählen Sie den Umschlag, um das Datum zu aktualisieren.",
   "date_updated": "Umschlagdatum aktualisiert.",

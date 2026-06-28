@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# RuscaWriter — three-column writing editor for non-fiction
+# Copyright (C) 2026  Nunzio Curcuruto
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 Modello dati e generazione documenti di RuscaWriter.
 
@@ -20,11 +36,11 @@ import tempfile
 
 # --- costanti applicative condivise -----------------------------------------
 APP_NAME = "RuscaWriter"
-APP_VERSION = "0.2 (2026-06-14)"
+APP_VERSION = "0.2.1 (2026-06-28)"
 # numero di versione "nudo" (senza data), per i punti in cui la data e' gia'
 # mostrata a parte, come la schermata Informazioni
-APP_VERSION_SHORT = "0.2"
-APP_AUTHOR = "ruscalinux-dev"
+APP_VERSION_SHORT = "0.2.1"
+APP_AUTHOR = "Nunzio Curcuruto"
 
 # Campi strutturati del frontespizio e del colophon. L'ordine e' anche l'ordine
 # di impaginazione. Tutti i campi sono opzionali: quelli vuoti non compaiono.

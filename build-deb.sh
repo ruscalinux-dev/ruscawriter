@@ -79,7 +79,7 @@ Upstream-Contact: ruscalinux-dev <info@ruscalinux.org>
 Source: https://github.com/ruscalinux-dev/ruscawriter
 
 Files: *
-Copyright: 2026 ruscalinux-dev <info@ruscalinux.org>
+Copyright: 2026 Nunzio Curcuruto <info@ruscalinux.org>
 License: GPL-3+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -153,7 +153,7 @@ https://www.ruscalinux.org/ruscawriter/
 .SH AUTHOR
 ruscalinux-dev <info@ruscalinux.org>
 .SH COPYRIGHT
-Copyright \(co 2026 ruscalinux-dev. License GPLv3+: GNU GPL version 3 or later.
+Copyright \(co 2026 Nunzio Curcuruto. License GPLv3+: GNU GPL version 3 or later.
 MANPAGE
 gzip -9 -n "$ROOT/usr/share/man/man1/$PKG.1"
 

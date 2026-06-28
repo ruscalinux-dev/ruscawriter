@@ -17,7 +17,7 @@
   "tip_toggle_right": "Mostrar/ocultar a coluna de notas",
   "tip_font_size": "Tamanho do texto (Ctrl + / Ctrl -)",
   "tip_spell_lang": "Idioma do corretor ortográfico",
-  "spell_unavailable": "A verificação ortográfica não está ativa.\nDetalhe: {e}\n\nNo Debian/Ubuntu instale:\nsudo apt install gir1.2-libspelling-1 hunspell-pt hunspell-en-us",
+  "spell_unavailable": "A verificação ortográfica não está ativa.\nDetalhe: {e}\n\nNo Debian/Ubuntu instale:\nsudo apt install gir1.2-spelling-1 hunspell-pt hunspell-en-us",
   "font_label": "Aa",
   "setdate_only_cover": "Selecione a capa para atualizar a data.",
   "date_updated": "Data da capa atualizada.",

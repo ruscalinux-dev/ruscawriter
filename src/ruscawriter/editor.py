@@ -1,9 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# RuscaWriter — three-column writing editor for non-fiction
+# Copyright (C) 2026  Nunzio Curcuruto
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 RuscaWriter
-Versione: 0.1
-Autore: ruscalinux-dev
+Versione: 0.2.1
+Autore: Nunzio Curcuruto
 
 Editor di scrittura a tre colonne scritto in Python + GTK 4 (PyGObject),
 senza librerie grafiche aggiuntive.
@@ -63,7 +79,7 @@ except Exception:
 # tenta Gspell 2.x (namespace 'Gspell' versione '2'), che e' la prima serie di
 # Gspell compatibile con GTK 4.
 #
-#   Debian/Ubuntu (libspelling): sudo apt install gir1.2-libspelling-1 \
+#   Debian/Ubuntu (libspelling): sudo apt install gir1.2-spelling-1 \
 #                                 hunspell-it hunspell-en-us
 #
 # SPELL_BACKEND vale "spelling" | "gspell2" | None.
@@ -116,10 +132,10 @@ APP_SOURCE = "https://github.com/ruscalinux-dev/ruscawriter"
 # leggibile viene composta nella lingua dell'interfaccia tramite i nomi dei mesi
 # tradotti (chiavi "month_1"... "month_12") e il pattern "date_format" presenti
 # nei file di lingua; in mancanza, si ripiega sull'inglese e infine sull'ISO.
-APP_DATE = (2026, 6, 14)
+APP_DATE = (2026, 6, 28)
 # stringhe di riserva (usate solo se mancano le chiavi tradotte dei mesi)
-APP_DATE_IT = "14 Giugno 2026"
-APP_DATE_EN = "June 14, 2026"
+APP_DATE_IT = "28 Giugno 2026"
+APP_DATE_EN = "June 28, 2026"
 
 ICON_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
@@ -750,7 +766,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         if SPELL_BACKEND is None:
             self.spell_error = ("nessun backend di controllo ortografico "
                                 "compatibile con GTK 4 (installa "
-                                "gir1.2-libspelling-1, oppure gir1.2-gspell-2)")
+                                "gir1.2-spelling-1)")
             return
         loc = self._spell_locale()
         try:

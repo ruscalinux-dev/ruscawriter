@@ -8,6 +8,13 @@ RuscaWriter è software libero rilasciato sotto licenza **GNU GPL v3+**.
 Contribuendo, accetti che il tuo contributo sia distribuito con la stessa
 licenza.
 
+**Nota sul metodo:** il codice esistente di RuscaWriter è stato realizzato
+con l'assistenza dell'IA sotto direzione umana passo dopo passo. Sono
+benvenuti i contributi scritti allo stesso modo così come quelli scritti
+interamente a mano — in entrambi i casi, rivedi e testa le tue modifiche
+prima di aprire una pull request, e assicurati che siano compatibili con la
+licenza GPL v3+.
+
 ## Come segnalare un problema (issue)
 
 Apri una *issue* su GitHub descrivendo:

@@ -17,7 +17,7 @@
   "tip_toggle_right": "Mostra/nascondi la colonna delle note",
   "tip_font_size": "Dimensione del testo (Ctrl + / Ctrl -)",
   "tip_spell_lang": "Lingua del controllo ortografico",
-  "spell_unavailable": "Controllo ortografico non attivo.\nDettaglio: {e}\n\nSu Debian/Ubuntu installa:\nsudo apt install gir1.2-gtkspell3-3.0 hunspell-it hunspell-en-us",
+  "spell_unavailable": "Controllo ortografico non attivo.\nDettaglio: {e}\n\nSu Debian/Ubuntu installa:\nsudo apt install gir1.2-spelling-1 hunspell-it hunspell-en-us",
   "font_label": "Aa",
   "setdate_only_cover": "Seleziona la copertina per aggiornare la data.",
   "date_updated": "Data della copertina aggiornata.",

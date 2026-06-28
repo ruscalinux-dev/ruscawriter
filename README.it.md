@@ -27,7 +27,7 @@ Per il controllo ortografico (opzionale ma consigliato), su GTK 4 serve
 GtkSpell NON funzionano con GTK 4 perché legati a GTK 3:
 
 ```
-sudo apt install gir1.2-libspelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
+sudo apt install gir1.2-spelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
 ```
 
 libspelling lavora su un editor `GtkSource.View`, quindi serve anche
@@ -42,9 +42,6 @@ parola). Per evitarlo, all'avvio RuscaWriter aggiunge automaticamente i
 frammenti di elisione di italiano e francese alle liste personali di Enchant
 in `~/.config/enchant/<locale>.dic`, senza toccare le parole che hai aggiunto
 tu. È trasparente: non devi fare nulla.
-
-In alternativa, se disponibile nei tuoi repository, va bene anche Gspell 2.x
-(`gir1.2-gspell-2`), che il programma usa come ripiego automatico.
 
 Aggiungi i pacchetti `hunspell-<lingua>` per le lingue che ti servono
 (es. `hunspell-fr`, `hunspell-de`): l'editor mostrerà automaticamente nel
@@ -150,6 +147,19 @@ note dei popover GTK con alcuni window manager:
 - `Ctrl+Maiusc+D` tema scuro
 - `F1` Informazioni
 
+## Come è stato realizzato
+
+RuscaWriter è stato progettato e diretto dal progetto RuscaLinux: l'idea, il
+layout a tre colonne, il design visivo e l'interfaccia, il tema plum chiaro e
+scuro, le funzionalità, il sistema di esportazione e le scelte editoriali sono
+tutto lavoro umano. L'implementazione in Python è stata poi realizzata con
+l'aiuto di strumenti di intelligenza artificiale, seguendo indicazioni umane
+dettagliate passo dopo passo, e rivista e testata da una persona a ogni stadio.
+
+Lo diciamo apertamente perché crediamo sia il modo onesto di descrivere come è
+stato costruito il software: una persona che decide cosa fare, che aspetto deve
+avere e come deve funzionare, e l'IA usata come strumento per scrivere il codice.
+
 ## Contribuire
 
 I contributi sono benvenuti: segnalazioni, traduzioni, correzioni e nuove
@@ -158,9 +168,16 @@ problema, far girare i test e proporre una modifica.
 
 ## Licenza
 
+Copyright © 2026 Nunzio Curcuruto.
+
 RuscaWriter è software libero rilasciato sotto licenza **GNU General Public
 License v3 o successiva (GPL-3.0-or-later)**. Il testo completo è nel file
 [LICENSE](LICENSE).
+
+RuscaWriter è stato progettato — interfaccia e design visivo compresi — e
+diretto dal progetto RuscaLinux. L'implementazione in Python è stata realizzata
+con strumenti di intelligenza artificiale seguendo indicazioni umane
+dettagliate, passo dopo passo, con revisione e test.
 
 I font inclusi (EB Garamond, Courier Prime) sono rilasciati sotto la **SIL Open
 Font License 1.1**; i rispettivi testi si trovano in `assets/`.

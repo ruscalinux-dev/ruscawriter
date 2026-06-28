@@ -17,7 +17,7 @@
   "tip_toggle_right": "Afficher/masquer la colonne des notes",
   "tip_font_size": "Taille du texte (Ctrl + / Ctrl -)",
   "tip_spell_lang": "Langue du correcteur orthographique",
-  "spell_unavailable": "La correction orthographique n’est pas active.\nDétail : {e}\n\nSur Debian/Ubuntu, installez :\nsudo apt install gir1.2-libspelling-1 hunspell-fr hunspell-en-us",
+  "spell_unavailable": "La correction orthographique n’est pas active.\nDétail : {e}\n\nSur Debian/Ubuntu, installez :\nsudo apt install gir1.2-spelling-1 hunspell-fr hunspell-en-us",
   "font_label": "Aa",
   "setdate_only_cover": "Sélectionnez la couverture pour mettre à jour la date.",
   "date_updated": "Date de la couverture mise à jour.",

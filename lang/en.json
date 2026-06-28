@@ -17,7 +17,7 @@
   "tip_toggle_right": "Show/hide the notes column",
   "tip_font_size": "Text size (Ctrl + / Ctrl -)",
   "tip_spell_lang": "Spell-check language",
-  "spell_unavailable": "Spell checking is not active.\nDetail: {e}\n\nOn Debian/Ubuntu install:\nsudo apt install gir1.2-gtkspell3-3.0 hunspell-it hunspell-en-us",
+  "spell_unavailable": "Spell checking is not active.\nDetail: {e}\n\nOn Debian/Ubuntu install:\nsudo apt install gir1.2-spelling-1 hunspell-it hunspell-en-us",
   "font_label": "Aa",
   "setdate_only_cover": "Select the cover to update the date.",
   "date_updated": "Cover date updated.",

@@ -28,7 +28,7 @@ For spell checking (optional but recommended), GTK 4 needs **libspelling**
 work with GTK 4 because they are tied to GTK 3:
 
 ```
-sudo apt install gir1.2-libspelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
+sudo apt install gir1.2-spelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
 ```
 
 libspelling operates on a `GtkSource.View` editor, so **GtkSourceView 5**
@@ -42,10 +42,6 @@ RuscaWriter automatically adds the elision fragments for Italian and French to
 the personal Enchant word lists in `~/.config/enchant/<locale>.dic`, without
 touching the words you have added yourself. It is transparent: you don't have to
 do anything.
-
-Alternatively, if available in your repositories, Gspell 2.x
-(`gir1.2-gspell-2`) also works, and the program uses it as an automatic
-fallback.
 
 Add the `hunspell-<language>` packages for the languages you need
 (e.g. `hunspell-fr`, `hunspell-de`): the editor will automatically show in the
@@ -152,6 +148,19 @@ with some window managers:
 - `Ctrl+Shift+D` dark theme
 - `F1` About
 
+## How it was made
+
+RuscaWriter was designed and directed by the RuscaLinux project: the concept,
+the three-column layout, the visual design and interface, the light and dark
+plum theme, the feature set, the export pipeline and the editorial decisions
+are all human work. The Python implementation was then produced with the help
+of AI tools, working from detailed step-by-step direction, and reviewed and
+tested by a human at every stage.
+
+We mention this openly because we think it's the honest way to describe how
+the software was built — a human deciding what to make, how it should look and
+how it should work, and AI used as a tool to write the code.
+
 ## Contributing
 
 Contributions are welcome: bug reports, translations, fixes and new features.
@@ -160,9 +169,16 @@ and propose a change.
 
 ## Licence
 
+Copyright © 2026 Nunzio Curcuruto.
+
 RuscaWriter is free software released under the **GNU General Public License
 v3 or later (GPL-3.0-or-later)**. The full text is in the [LICENSE](LICENSE)
 file.
+
+RuscaWriter was designed, including its visual design and interface, and
+directed by the RuscaLinux project. The Python implementation was produced
+with AI tools following detailed, step-by-step human direction, review, and
+testing.
 
 The included fonts (EB Garamond, Courier Prime) are released under the **SIL
 Open Font License 1.1**; their texts are in `assets/`.

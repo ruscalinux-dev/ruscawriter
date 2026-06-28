@@ -17,7 +17,7 @@
   "tip_toggle_right": "Показать/скрыть колонку заметок",
   "tip_font_size": "Размер текста (Ctrl + / Ctrl -)",
   "tip_spell_lang": "Язык проверки орфографии",
-  "spell_unavailable": "Проверка орфографии не активна.\nПодробности: {e}\n\nВ Debian/Ubuntu установите:\nsudo apt install gir1.2-libspelling-1 hunspell-ru hunspell-en-us",
+  "spell_unavailable": "Проверка орфографии не активна.\nПодробности: {e}\n\nВ Debian/Ubuntu установите:\nsudo apt install gir1.2-spelling-1 hunspell-ru hunspell-en-us",
   "font_label": "Аа",
   "setdate_only_cover": "Выберите обложку, чтобы обновить дату.",
   "date_updated": "Дата обложки обновлена.",
