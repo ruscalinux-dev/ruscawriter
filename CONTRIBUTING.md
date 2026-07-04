@@ -1,95 +1,104 @@
-# Contribuire a RuscaWriter
+# Contributing to RuscaWriter
 
-Grazie per l'interesse verso **RuscaWriter**, l'editor di scrittura a tre
-colonne del progetto RuscaLinux. I contributi sono benvenuti: segnalazioni di
-problemi, idee, traduzioni, correzioni e nuove funzionalità.
+🇮🇹 [Leggilo in italiano](CONTRIBUTING.it.md)
 
-RuscaWriter è software libero rilasciato sotto licenza **GNU GPL v3+**.
-Contribuendo, accetti che il tuo contributo sia distribuito con la stessa
-licenza.
+Thank you for your interest in **RuscaWriter**, the three-column writing
+editor of the RuscaLinux project. Contributions are welcome: bug reports,
+ideas, translations, fixes and new features.
 
-## Come segnalare un problema (issue)
+RuscaWriter is free software released under the **GNU GPL v3+** license. By
+contributing, you agree that your contribution is distributed under the same
+license.
 
-Apri una *issue* su GitHub descrivendo:
+**A note on method:** the existing RuscaWriter code was produced with the
+help of AI under step-by-step human direction. Contributions written the same
+way are as welcome as those written entirely by hand — in either case, review
+and test your changes before opening a pull request, and make sure they are
+compatible with the GPL v3+ license.
 
-- cosa ti aspettavi e cosa è successo invece;
-- i passi per riprodurre il problema;
-- la tua distribuzione e versione (es. RuscaLinux, Debian 13), la versione di
-  Python e di GTK 4;
-- se possibile, il messaggio d'errore completo (avvia il programma da terminale
-  con `python3 ruscawriter.py` per vederlo).
+## How to report a problem (issue)
 
-Prima di aprire una nuova issue, controlla se ne esiste già una simile.
+Open an *issue* on GitHub describing:
 
-## Come proporre una modifica (pull request)
+- what you expected and what happened instead;
+- the steps to reproduce the problem;
+- your distribution and version (e.g. RuscaLinux, Debian 13), the version of
+  Python and of GTK 4;
+- if possible, the full error message (start the program from a terminal with
+  `python3 ruscawriter.py` to see it).
 
-1. Fai un *fork* del repository e crea un ramo dedicato
-   (es. `git checkout -b correzione-export-pdf`).
-2. Fai le tue modifiche, mantenendole **mirate**: una pull request per un
-   argomento. È più facile da rivedere e da accettare.
-3. **Esegui i test** prima di inviare (vedi sotto): devono restare tutti verdi.
-4. Scrivi un messaggio di commit chiaro che spieghi *cosa* cambia e *perché*.
-5. Apri la pull request descrivendo la modifica e, se risolve una issue,
-   collegala.
+Before opening a new issue, check whether a similar one already exists.
 
-## Ambiente di sviluppo
+## How to propose a change (pull request)
 
-RuscaWriter richiede Python 3, PyGObject e GTK 4. Su Debian/Ubuntu/RuscaLinux:
+1. *Fork* the repository and create a dedicated branch
+   (e.g. `git checkout -b fix-pdf-export`).
+2. Make your changes, keeping them **focused**: one pull request per topic.
+   It is easier to review and to accept.
+3. **Run the tests** before submitting (see below): they must all stay green.
+4. Write a clear commit message explaining *what* changes and *why*.
+5. Open the pull request describing the change and, if it fixes an issue,
+   link it.
+
+## Development environment
+
+RuscaWriter requires Python 3, PyGObject and GTK 4. On
+Debian/Ubuntu/RuscaLinux:
 
 ```
 sudo apt install python3-gi gir1.2-gtk-4.0
 ```
 
-Per il controllo ortografico (opzionale):
+For spell checking (optional):
 
 ```
-sudo apt install gir1.2-gtksource-5 gir1.2-spelling-1 hunspell-it hunspell-en-us
+sudo apt install gir1.2-gtksource-5 gir1.2-spelling-1 hunspell-en-us hunspell-it
 ```
 
-Per avviare dal sorgente, dalla radice del progetto:
+To run from source, from the project root:
 
 ```
 python3 ruscawriter.py
 ```
 
-## Eseguire i test
+## Running the tests
 
-Il modello dati e l'esportazione sono coperti da una suite di test che **non
-richiede GTK** (importa solo i moduli del pacchetto). Dalla radice del progetto:
+The data model and the exports are covered by a test suite that **does not
+require GTK** (it imports only the package modules). From the project root:
 
 ```
 python3 tests/test_ruscawriter.py
 ```
 
-Tutti i test devono passare. Se aggiungi una funzionalità al modello o
-all'esportazione, aggiungi anche un test che la copra.
+All tests must pass. If you add a feature to the model or to the exports,
+add a test that covers it as well.
 
-## Struttura del progetto
+## Project structure
 
-- `ruscawriter.py` — avvio dell'applicazione.
-- `src/ruscawriter/editor.py` — interfaccia grafica (GTK 4).
-- `src/ruscawriter/model.py` — modello dati ed esportazione (indipendente da
-  GTK; è qui che girano i test).
-- `src/ruscawriter/i18n.py` + `lang/*.json` — traduzioni.
-- `tests/` — la suite di test.
-- `docs/` — guida didattica e mini editor d'esempio.
+- `ruscawriter.py` — application launcher.
+- `src/ruscawriter/editor.py` — graphical interface (GTK 4).
+- `src/ruscawriter/model.py` — data model and exports (independent of GTK;
+  this is where the tests run).
+- `src/ruscawriter/i18n.py` + `lang/*.json` — translations.
+- `tests/` — the test suite.
+- `docs/` — a heavily commented example mini-editor (bilingual EN + IT).
 
-## Stile del codice
+## Code style
 
-- Segui lo stile già presente nel file che stai modificando.
-- Preferisci modifiche piccole e leggibili a grandi riscritture.
-- I commenti in italiano vanno bene: il progetto nasce in italiano ed è
-  bilingue.
+- Follow the style already present in the file you are editing.
+- Prefer small, readable changes over large rewrites.
+- Bilingual comments are fine: the project was born in Italian and is
+  bilingual (English + Italian).
 
-## Tradurre l'interfaccia
+## Translating the interface
 
-Per aggiungere o completare una lingua, copia `lang/en.json` in
-`lang/<codice>.json`, traduci i valori (lasciando intatte le chiavi e i
-segnaposto come `{p}` o `{n}`), e — se la traduzione è completa — aggiungi il
-codice lingua a `COMPLETE_LANGUAGES` in `src/ruscawriter/i18n.py`. Nessuna
-modifica al resto del codice è necessaria.
+To add or complete a language, copy `lang/en.json` to `lang/<code>.json`,
+translate the values (leaving the keys and placeholders such as `{p}` or
+`{n}` untouched), and — if the translation is complete — add the language
+code to `COMPLETE_LANGUAGES` in `src/ruscawriter/i18n.py`. No change to the
+rest of the code is needed.
 
-## Domande
+## Questions
 
-Per dubbi o proposte più ampie, apri una issue con l'etichetta "discussione"
-oppure scrivi a info@ruscalinux.org.
+For questions or broader proposals, open an issue with the "discussion" label
+or write to info@ruscalinux.org.

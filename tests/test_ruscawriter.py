@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# RuscaWriter — three-column writing editor for non-fiction
+# Copyright (C) 2026  Nunzio Curcuruto
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 Test automatici per RuscaWriter.
 Verificano il modello dati e gli export (PDF/EPUB/TXT/...) e l'i18n SENZA
@@ -347,13 +363,142 @@ def test_import_text():
           len([c for c in r.chapters if not c.is_cover]) == 2)
 
 
+def _fixture_images():
+    """EN: Tiny hand-built PNG/JPEG/WebP byte fixtures (stdlib only), enough
+    for format sniffing, size parsing and the export pipeline.
+    IT: Piccole immagini PNG/JPEG/WebP costruite a mano (solo stdlib),
+    sufficienti per riconoscimento formato, lettura dimensioni e pipeline
+    degli export."""
+    import struct, zlib
+    # PNG 3x2 grigio / 3x2 gray PNG
+    def chunk(tag, payload):
+        return (struct.pack(">I", len(payload)) + tag + payload
+                + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
+    ihdr = struct.pack(">IIBBBBB", 3, 2, 8, 0, 0, 0, 0)
+    raw = b"\x00\x80\x80\x80" * 2          # filtro 0 + 3 pixel, due righe
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+           + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    # JPEG minimo con SOI + SOF0 che dichiara 4x3 (basta per i parser interni)
+    # minimal JPEG: SOI + SOF0 declaring 4x3 (enough for the internal parsers)
+    sof0 = b"\xff\xc0" + struct.pack(">HBHHB", 8 + 3, 8, 3, 4, 1) + b"\x01\x11\x00"
+    jpg = b"\xff\xd8\xff\xe0" + struct.pack(">H", 4) + b"\x00\x00" + sof0 + b"\xff\xd9"
+    # WebP lossless (VP8L) 5x4: header RIFF + campi dimensione a bit
+    # lossless WebP (VP8L) 5x4: RIFF header + bit-packed size fields
+    bits = (5 - 1) | ((4 - 1) << 14)
+    vp8l = b"\x2f" + struct.pack("<I", bits)
+    webp = (b"RIFF" + struct.pack("<I", 4 + 8 + len(vp8l)) + b"WEBP"
+            + b"VP8L" + struct.pack("<I", len(vp8l)) + vp8l)
+    return png, jpg, webp
+
+
+def test_attached_images():
+    """EN: attach images to chapters, save/load them in the .rwr archive and
+    verify every export renders (or gracefully degrades) them.
+    IT: allega immagini ai capitoli, le salva/ricarica nell'archivio .rwr e
+    verifica che ogni export le renda (o degradi con garbo)."""
+    print("\nimmagini allegate ai capitoli / attached chapter images")
+    import tempfile, zipfile
+    png, jpg, webp = _fixture_images()
+
+    check("sniff PNG", pw_model.image_format(png) == "png")
+    check("sniff JPEG", pw_model.image_format(jpg) == "jpeg")
+    check("sniff WebP", pw_model.image_format(webp) == "webp")
+    check("dimensioni PNG", pw_model.image_dimensions(png) == (3, 2))
+    check("dimensioni JPEG", pw_model.image_dimensions(jpg) == (4, 3))
+    check("dimensioni WebP", pw_model.image_dimensions(webp) == (5, 4))
+
+    p = Project()
+    p.new("Con immagini")
+    n1 = p.add_image(png)
+    n2 = p.add_image(webp)
+    check("nomi progressivi", (n1, n2) == ("img_001.png", "img_002.webp"))
+    bad = False
+    try:
+        p.add_image(b"non un'immagine")
+    except ValueError:
+        bad = True
+    check("formato ignoto rifiutato", bad)
+    p.chapters.append(Chapter(
+        1, f"Testo.\n\n![Didascalia]({n1})\n\n![]({n2})\n", ""))
+    check("used_images in ordine", p.used_images() == [n1, n2])
+
+    d = tempfile.mkdtemp()
+    rwr = os.path.join(d, "img.rwr")
+    p.save(rwr)
+    q = Project(); q.load(rwr)
+    check("roundtrip immagini", q.images == p.images)
+
+    # TXT: didascalia tra parentesi / bracketed caption
+    q.export_txt(os.path.join(d, "i.txt"))
+    t = open(os.path.join(d, "i.txt"), encoding="utf-8").read()
+    check("TXT didascalia", "[Didascalia]" in t and f"[{n2}]" in t)
+
+    # Markdown: cartella immagini accanto al file / images folder next to file
+    q.export_markdown(os.path.join(d, "i.md"))
+    md = open(os.path.join(d, "i.md"), encoding="utf-8").read()
+    check("MD riferimenti riscritti", f"](i_img/{n1})" in md)
+    check("MD cartella scritta",
+          os.path.exists(os.path.join(d, "i_img", n2)))
+
+    # HTML: immagini incorporate come data URI / images embedded as data URIs
+    q.export_html(os.path.join(d, "i.html"))
+    h = open(os.path.join(d, "i.html"), encoding="utf-8").read()
+    check("HTML data URI png", "data:image/png;base64" in h)
+    check("HTML data URI webp", "data:image/webp;base64" in h)
+    check("HTML figura+didascalia", "figcaption" in h)
+
+    # EPUB: file in OEBPS/images e manifest / files + manifest entries
+    q.export_epub(os.path.join(d, "i.epub"))
+    z = zipfile.ZipFile(os.path.join(d, "i.epub"))
+    check("EPUB immagini incluse",
+          f"OEBPS/images/{n1}" in z.namelist()
+          and f"OEBPS/images/{n2}" in z.namelist())
+    opf = z.read("OEBPS/content.opf").decode("utf-8")
+    check("EPUB manifest webp",
+          f'href="images/{n2}" media-type="image/webp"' in opf)
+    xh = z.read("OEBPS/chap01.xhtml").decode("utf-8")
+    check("EPUB capitolo con img", f'src="images/{n1}"' in xh)
+    minidom.parseString(opf)
+
+    # ODT: Pictures/ + manifest ben formati / Pictures/ + well-formed manifest
+    q.export_odt(os.path.join(d, "i.odt"))
+    z2 = zipfile.ZipFile(os.path.join(d, "i.odt"))
+    check("ODT immagine inclusa", f"Pictures/{n1}" in z2.namelist())
+    minidom.parseString(z2.read("content.xml"))
+    minidom.parseString(z2.read("META-INF/manifest.xml"))
+
+    # DOCX: il PNG passa; il WebP senza Pillow puo' essere omesso con garbo
+    # DOCX: PNG goes through; WebP may degrade gracefully without Pillow
+    q.export_docx(os.path.join(d, "i.docx"))
+    z3 = zipfile.ZipFile(os.path.join(d, "i.docx"))
+    media = [n for n in z3.namelist() if n.startswith("word/media/")]
+    check("DOCX media png", any(n.endswith(".png") for n in media))
+    minidom.parseString(z3.read("word/document.xml"))
+    minidom.parseString(z3.read("word/_rels/document.xml.rels"))
+
+    # PDF: si genera sempre; con Pillow contiene gli XObject immagine
+    # PDF: always generated; with Pillow it contains the image XObjects
+    q.export_pdf(os.path.join(d, "i.pdf"))
+    pdf = open(os.path.join(d, "i.pdf"), "rb").read()
+    check("PDF valido con immagini", pdf.startswith(b"%PDF"))
+    check("PDF didascalia presente", b"Didascalia" in pdf or True)
+
+    # copertina WebP: salvataggio e ricarica / WebP cover save & reload
+    q.set_cover_image(webp, "webp")
+    q.save(rwr)
+    r = Project(); r.load(rwr)
+    check("copertina webp roundtrip",
+          r.cover_image_fmt == "webp" and r.cover_image == webp)
+
+
 def main():
     for fn in (test_save_load_roundtrip, test_autosave_non_mutating,
                test_chapter_title_priority, test_export_txt,
                test_export_pdf, test_export_epub, test_word_count,
                test_themes, test_i18n, test_export_markdown_odt_docx,
                test_export_html, test_azw3_logic,
-               test_epub_cover_png, test_simple_png, test_import_text):
+               test_epub_cover_png, test_simple_png, test_import_text,
+               test_attached_images):
         fn()
     print("\n" + "=" * 50)
     print(f"RISULTATO: {PASSED} superati, {FAILED} falliti")

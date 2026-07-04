@@ -1,31 +1,71 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-RuscaWriter
-Versione: 0.1
-Autore: ruscalinux-dev
+# RuscaWriter — three-column writing editor for non-fiction
+# Copyright (C) 2026  Nunzio Curcuruto
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-Editor di scrittura a tre colonne scritto in Python + GTK 4 (PyGObject),
-senza librerie grafiche aggiuntive.
+"""
+RuscaWriter — GTK 4 user interface / interfaccia grafica GTK 4
+Versione / Version: 0.3
+Autore / Author: Nunzio Curcuruto
+
+EN — Three-column writing editor built with Python + GTK 4 (PyGObject),
+with no extra graphical libraries.
+
+ - Left column   : list of the project's chapters/sections.
+ - Center column : writing area for the text (black serif).
+ - Right column  : notes attached to the selected chapter.
+
+Project format: an .rwr file = a tar.gz archive containing
+    01.md  01n.md    (chapter 01 text + its note)
+    02.md  02n.md
+    ...
+    img_001.png ...  (images attached to the chapters)
+    cover.png/jpg/webp, meta.json, frontispiece.json, colophon.json
+
+This module was ported from GTK 3 to GTK 4. Main differences:
+  - Gtk.Application / Gtk.ApplicationWindow as the app skeleton.
+  - Menus built with Gio.Menu + Gtk.PopoverMenuBar and GAction; shortcuts
+    registered with app.set_accels_for_action.
+  - Asynchronous dialogs (Dialog.run() no longer exists in GTK 4): themed
+    windows with callbacks, and Gtk.FileDialog for open/save.
+  - set_child()/append() instead of add()/pack_start().
+  - Chapter list with Gtk.ListView + Gtk.StringList + Gtk.SingleSelection.
+  - Events via controllers (GestureClick) instead of event signals.
+
+IT — Editor di scrittura a tre colonne scritto in Python + GTK 4
+(PyGObject), senza librerie grafiche aggiuntive.
 
  - Colonna sinistra : elenco dei capitoli/sezioni del progetto.
  - Colonna centrale : area di scrittura del testo (serif nero).
  - Colonna destra   : note relative al capitolo selezionato.
 
 Formato progetto: file .rwr = archivio tar.gz contenente
-    01.md  01n.md   (testo capitolo 01 + sua nota)
+    01.md  01n.md    (testo capitolo 01 + sua nota)
     02.md  02n.md
     ...
+    img_001.png ...  (immagini allegate ai capitoli)
+    cover.png/jpg/webp, meta.json, frontispiece.json, colophon.json
 
 Questo modulo e' stato portato da GTK 3 a GTK 4. Differenze principali:
   - Gtk.Application / Gtk.ApplicationWindow come struttura dell'app.
   - Menu costruiti con Gio.Menu + Gtk.PopoverMenuBar e GAction; le scorciatoie
     sono registrate con app.set_accels_for_action.
-  - Dialoghi asincroni (Dialog.run() non esiste piu' in GTK 4): si usano
-    finestre con il nostro tema (leggibili in chiaro e scuro) e callback, e
-    Gtk.FileDialog per aprire/salvare.
+  - Dialoghi asincroni (Dialog.run() non esiste piu' in GTK 4): finestre con
+    il nostro tema e callback, e Gtk.FileDialog per aprire/salvare.
   - set_child()/append() al posto di add()/pack_start().
-  - CSS applicato per-display (add_provider_for_display).
   - Lista capitoli con Gtk.ListView + Gtk.StringList + Gtk.SingleSelection.
   - Eventi tramite controller (GestureClick) invece dei segnali event.
 """
@@ -63,7 +103,7 @@ except Exception:
 # tenta Gspell 2.x (namespace 'Gspell' versione '2'), che e' la prima serie di
 # Gspell compatibile con GTK 4.
 #
-#   Debian/Ubuntu (libspelling): sudo apt install gir1.2-libspelling-1 \
+#   Debian/Ubuntu (libspelling): sudo apt install gir1.2-spelling-1 \
 #                                 hunspell-it hunspell-en-us
 #
 # SPELL_BACKEND vale "spelling" | "gspell2" | None.
@@ -112,14 +152,20 @@ APP_ID = "org.ruscalinux.RuscaWriter"
 # Indirizzi pubblici del progetto, mostrati nel dialogo Informazioni.
 APP_WEBSITE = "https://www.ruscalinux.org/ruscawriter/"
 APP_SOURCE = "https://github.com/ruscalinux-dev/ruscawriter"
-# Data di rilascio di questa build (anno, mese, giorno). La rappresentazione
-# leggibile viene composta nella lingua dell'interfaccia tramite i nomi dei mesi
-# tradotti (chiavi "month_1"... "month_12") e il pattern "date_format" presenti
-# nei file di lingua; in mancanza, si ripiega sull'inglese e infine sull'ISO.
-APP_DATE = (2026, 6, 14)
+# EN: release date of this build (year, month, day). The readable form is
+#     composed in the interface language via the translated month names
+#     (keys "month_1"..."month_12") and the "date_format" pattern in the
+#     language files; missing those, it falls back to English, then ISO.
+# IT: data di rilascio di questa build (anno, mese, giorno). La forma
+#     leggibile viene composta nella lingua dell'interfaccia tramite i nomi
+#     dei mesi tradotti (chiavi "month_1"..."month_12") e il pattern
+#     "date_format" nei file di lingua; in mancanza, si ripiega sull'inglese
+#     e infine sull'ISO.
+APP_DATE = (2026, 7, 4)
+# EN/IT: fallback strings (only if translated month keys are missing) /
 # stringhe di riserva (usate solo se mancano le chiavi tradotte dei mesi)
-APP_DATE_IT = "14 Giugno 2026"
-APP_DATE_EN = "June 14, 2026"
+APP_DATE_IT = "4 Luglio 2026"
+APP_DATE_EN = "July 4, 2026"
 
 ICON_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
@@ -750,7 +796,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         if SPELL_BACKEND is None:
             self.spell_error = ("nessun backend di controllo ortografico "
                                 "compatibile con GTK 4 (installa "
-                                "gir1.2-libspelling-1, oppure gir1.2-gspell-2)")
+                                "gir1.2-spelling-1)")
             return
         loc = self._spell_locale()
         try:
@@ -1206,7 +1252,9 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             ("up",           self.on_move_up,        ["<Control><Shift>Up"]),
             ("down",         self.on_move_down,      ["<Control><Shift>Down"]),
             ("find",         self.on_find_replace,   ["<Control>f"]),
-            ("setdate",      self.on_update_cover_date, []),
+            # EN: attach an image (PNG/JPEG/WebP) into the current chapter
+            # IT: allega un'immagine (PNG/JPEG/WebP) nel capitolo corrente
+            ("insert_image", self.on_insert_image,   ["<Control><Shift>i"]),
             ("toggle_left",  self.on_toggle_left,    ["<Control>l"]),
             ("toggle_right", self.on_toggle_right,   ["<Control>r"]),
             ("fullscreen",   self.on_toggle_fullscreen, ["F11"]),
@@ -1275,7 +1323,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         s3.append(self.t("mi_find"), "win.find")
         m_edit.append_section(None, s3)
         s4 = Gio.Menu()
-        s4.append(self.t("mi_setdate"), "win.setdate")
+        s4.append(self.t("mi_insert_image"), "win.insert_image")
         m_edit.append_section(None, s4)
         menubar.append_submenu(self.t("menu_edit"), m_edit)
 
@@ -1441,14 +1489,6 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         movebar.append(self.btn_up)
         movebar.append(self.btn_down)
         left.append(movebar)
-
-        datebar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        datebar.add_css_class("rusca-toolbar")
-        self.btn_setdate = Gtk.Button()
-        self.btn_setdate.set_hexpand(True)
-        self.btn_setdate.connect("clicked", self.on_update_cover_date)
-        datebar.append(self.btn_setdate)
-        left.append(datebar)
 
         # colonna centrale
         center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1680,7 +1720,6 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             pass
         self.btn_up.set_label(self.t("btn_up"))
         self.btn_down.set_label(self.t("btn_down"))
-        self.btn_setdate.set_label(self.t("btn_setdate"))
         self.font_label.set_text(self.t("font_label"))
         self.font_size_spin.set_tooltip_text(self.t("tip_font_size"))
         self.spell_combo.set_tooltip_text(self.t("tip_spell_lang"))
@@ -2372,19 +2411,45 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
     def on_move_down(self, *_):
         self._move(+1)
 
-    def on_update_cover_date(self, *_):
+    def on_insert_image(self, *_):
+        """EN: Attach an image (PNG/JPEG/WebP) to the current chapter: the
+        file is copied INTO the project (it travels inside the .rwr archive)
+        and a Markdown line ![caption](img_NNN.ext) is inserted at the
+        cursor. The exports render it as a real picture.
+        IT: Allega un'immagine (PNG/JPEG/WebP) al capitolo corrente: il file
+        viene copiato DENTRO il progetto (viaggia nell'archivio .rwr) e una
+        riga Markdown ![didascalia](img_NNN.ext) viene inserita al cursore.
+        Gli export la rendono come immagine vera e propria."""
         row = self._current_index()
-        if row < 0 or not self.project.chapters[row].is_cover:
-            self._error(self.t("setdate_only_cover"))
+        if row < 0 or self.project.chapters[row].is_cover:
+            # EN/IT: images belong to content chapters, not to the cover
+            # (the cover has its own image in File -> Editorial sections).
+            self._error(self.t("img_only_chapter"))
             return
-        self._commit_current()
-        self.project.update_cover_date()
-        self.current = self.project.chapters[row]
-        self._loading = True
-        self.text_buffer.set_text(self.current.text)
-        self._loading = False
-        self._mark_dirty()
-        self._info(self.t("date_updated"))
+
+        def on_path(path):
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+                name = self.project.add_image(data)
+            except ValueError:
+                self._error(self.t("err_img_format"))
+                return
+            except Exception as exc:
+                self._error(self.t("err_open", e=exc))
+                return
+            # EN: default caption = the original file name (editable text).
+            # IT: didascalia predefinita = nome del file originale
+            #     (testo modificabile).
+            caption = os.path.splitext(os.path.basename(path))[0]
+            snippet = f"\n![{caption}]({name})\n"
+            self.text_buffer.insert_at_cursor(snippet)
+            self._commit_current()
+            self._mark_dirty()
+
+        self._open_file_dialog(self.t("mi_insert_image"),
+                               ["*.png", "*.jpg", "*.jpeg", "*.webp"],
+                               self.t("filter_image"), on_path)
 
     def _move(self, direction):
         row = self._current_index()
@@ -2707,21 +2772,21 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
                 try:
                     with open(path, "rb") as f:
                         data = f.read()
-                    low = path.lower()
-                    if low.endswith((".jpg", ".jpeg")):
-                        fmt = "jpeg"
-                    elif low.endswith(".png"):
-                        fmt = "png"
-                    else:
-                        # determina dal contenuto: PNG inizia con \x89PNG
-                        fmt = "png" if data[:4] == b"\x89PNG" else "jpeg"
+                    # EN: format detected from the CONTENT (magic bytes),
+                    #     so a wrong extension cannot fool the export.
+                    # IT: formato riconosciuto dal CONTENUTO (byte iniziali),
+                    #     cosi' un'estensione sbagliata non inganna l'export.
+                    fmt = pw_model.image_format(data)
+                    if fmt is None:
+                        self._error(self.t("err_img_format"))
+                        return
                     pending["image"] = data
                     pending["fmt"] = fmt
                     refresh_preview()
                 except Exception as exc:
                     self._error(self.t("err_open", e=exc))
             self._open_file_dialog(self.t("sec_cover_attach"),
-                                   ["*.png", "*.jpg", "*.jpeg"],
+                                   ["*.png", "*.jpg", "*.jpeg", "*.webp"],
                                    self.t("filter_image"), on_path)
 
         def do_remove():

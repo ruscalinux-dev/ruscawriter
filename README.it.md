@@ -27,7 +27,7 @@ Per il controllo ortografico (opzionale ma consigliato), su GTK 4 serve
 GtkSpell NON funzionano con GTK 4 perché legati a GTK 3:
 
 ```
-sudo apt install gir1.2-libspelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
+sudo apt install gir1.2-spelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
 ```
 
 libspelling lavora su un editor `GtkSource.View`, quindi serve anche
@@ -42,9 +42,6 @@ parola). Per evitarlo, all'avvio RuscaWriter aggiunge automaticamente i
 frammenti di elisione di italiano e francese alle liste personali di Enchant
 in `~/.config/enchant/<locale>.dic`, senza toccare le parole che hai aggiunto
 tu. È trasparente: non devi fare nulla.
-
-In alternativa, se disponibile nei tuoi repository, va bene anche Gspell 2.x
-(`gir1.2-gspell-2`), che il programma usa come ripiego automatico.
 
 Aggiungi i pacchetti `hunspell-<lingua>` per le lingue che ti servono
 (es. `hunspell-fr`, `hunspell-de`): l'editor mostrerà automaticamente nel
@@ -70,8 +67,7 @@ ruscawriter/
 ├── tests/                   test automatici
 │   └── test_ruscawriter.py
 └── docs/                    materiale didattico
-    ├── GUIDA_DIDATTICA.md
-    └── mini_ruscawriter.py
+    └── mini_ruscawriter.py   mini-editor didattico molto commentato (EN + IT)
 ```
 
 ## Test
@@ -134,6 +130,28 @@ EPUB e HTML lo richiedono per nome con ripiego sui serif di sistema. Entrambi i
 font sono liberi, rilasciati sotto la **SIL Open Font License 1.1**, e i
 rispettivi testi di licenza si trovano in `assets/` accanto ai file `.ttf`.
 
+## Immagini nei capitoli
+
+Con **Modifica → Inserisci immagine…** (`Ctrl+Maiusc+I`) si allega al
+capitolo corrente un'immagine PNG, JPEG o WebP. Il file viene copiato
+*dentro* il progetto (viaggia nell'archivio `.rwr`, così il progetto resta un
+unico file trasportabile) e al cursore compare una riga Markdown standard:
+
+```
+![didascalia](img_001.png)
+```
+
+La didascalia è testo libero e modificabile. Tutti gli export rendono
+l'immagine come figura vera e propria: nel PDF è centrata e scalata alla
+larghezza del testo, con la didascalia in corsivo; EPUB, ODT, DOCX e HTML la
+incorporano; il Markdown esportato copia le immagini in una cartella
+affiancata; il TXT semplice mostra la didascalia tra parentesi quadre.
+L'immagine di copertina (File → Sezioni editoriali) accetta gli stessi tre
+formati. Nota: Word non visualizza il WebP, quindi per il DOCX (e per il PDF)
+le immagini WebP vengono convertite in JPEG automaticamente se Pillow è
+installato; senza Pillow vengono semplicemente omesse in quei due formati,
+conservando la didascalia.
+
 ## Scorciatoie da tastiera
 
 Le funzioni principali hanno una scorciatoia, utili soprattutto a schermo
@@ -143,12 +161,26 @@ note dei popover GTK con alcuni window manager:
 - `Ctrl+N` nuovo, `Ctrl+O` apri, `Ctrl+S` salva, `Ctrl+I` importa come capitoli
 - `Ctrl+Maiusc+N` aggiungi capitolo, `F2` rinomina capitolo
 - `Ctrl+F` cerca e sostituisci
+- `Ctrl+Maiusc+I` inserisci immagine nel capitolo
 - `Ctrl++` / `Ctrl+-` ingrandisci/riduci il testo
 - `Ctrl+E` anteprima, `Ctrl+Maiusc+E` anteprima documento intero
 - `Ctrl+L` / `Ctrl+R` mostra/nascondi colonna capitoli/note
 - `F11` schermo intero
 - `Ctrl+Maiusc+D` tema scuro
 - `F1` Informazioni
+
+## Come è stato realizzato
+
+RuscaWriter è stato progettato e diretto dal progetto RuscaLinux: l'idea, il
+layout a tre colonne, il design visivo e l'interfaccia, il tema plum chiaro e
+scuro, le funzionalità, il sistema di esportazione e le scelte editoriali sono
+tutto lavoro umano. L'implementazione in Python è stata poi realizzata con
+l'aiuto di strumenti di intelligenza artificiale, seguendo indicazioni umane
+dettagliate passo dopo passo, e rivista e testata da una persona a ogni stadio.
+
+Lo diciamo apertamente perché crediamo sia il modo onesto di descrivere come è
+stato costruito il software: una persona che decide cosa fare, che aspetto deve
+avere e come deve funzionare, e l'IA usata come strumento per scrivere il codice.
 
 ## Contribuire
 
@@ -158,9 +190,16 @@ problema, far girare i test e proporre una modifica.
 
 ## Licenza
 
+Copyright © 2026 Nunzio Curcuruto.
+
 RuscaWriter è software libero rilasciato sotto licenza **GNU General Public
 License v3 o successiva (GPL-3.0-or-later)**. Il testo completo è nel file
 [LICENSE](LICENSE).
+
+RuscaWriter è stato progettato — interfaccia e design visivo compresi — e
+diretto dal progetto RuscaLinux. L'implementazione in Python è stata realizzata
+con strumenti di intelligenza artificiale seguendo indicazioni umane
+dettagliate, passo dopo passo, con revisione e test.
 
 I font inclusi (EB Garamond, Courier Prime) sono rilasciati sotto la **SIL Open
 Font License 1.1**; i rispettivi testi si trovano in `assets/`.

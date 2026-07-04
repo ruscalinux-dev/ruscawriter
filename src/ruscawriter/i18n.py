@@ -1,12 +1,41 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Internazionalizzazione (i18n) di RuscaWriter.
+# RuscaWriter — three-column writing editor for non-fiction
+# Copyright (C) 2026  Nunzio Curcuruto
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-Le traduzioni NON sono più scritte nel codice: vivono in file JSON nella
+"""
+EN — RuscaWriter internationalization (i18n).
+
+Translations are NOT written in the code: they live in JSON files inside
+the 'lang/' folder (one per language, e.g. it.json, en.json, ...). This
+keeps the program modular and translatable without touching the Python
+sources: to add or complete a language, just edit its JSON file.
+
+- LANGUAGES lists the 40 most spoken languages (code and native name).
+- load_language(code) loads a language dictionary, automatically falling
+  back to English (and then to the key itself) for any missing entry.
+- ensure_language_files() creates the "skeletons" of missing files, so the
+  selector immediately shows every language even if not yet translated.
+
+IT — Internazionalizzazione (i18n) di RuscaWriter.
+
+Le traduzioni NON sono scritte nel codice: vivono in file JSON nella
 cartella 'lang/' (uno per lingua, es. it.json, en.json, ...). Questo rende
-il programma modulare e traducibile senza toccare il Python: per aggiungere o
-completare una lingua basta editare il suo file JSON.
+il programma modulare e traducibile senza toccare il Python: per aggiungere
+o completare una lingua basta editare il suo file JSON.
 
 - LANGUAGES elenca le 40 lingue più parlate al mondo (codice e nome nativo).
 - load_language(code) carica il dizionario di una lingua, con fallback

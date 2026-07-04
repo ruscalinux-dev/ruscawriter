@@ -1,13 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Modello dati e generazione documenti di RuscaWriter.
+# RuscaWriter — three-column writing editor for non-fiction
+# Copyright (C) 2026  Nunzio Curcuruto
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-Questo modulo è INDIPENDENTE dall'interfaccia grafica (non importa GTK):
+"""
+EN — RuscaWriter data model and document generation.
+
+This module is INDEPENDENT from the graphical interface (it never imports
+GTK): it holds the project structure (Chapter, Project), the native PDF
+writer (write_pdf) and every export (TXT, Markdown, PDF, EPUB, ODT, DOCX,
+HTML, AZW3), plus the helpers for the images attached to chapters
+(PNG/JPEG/WebP). Being separate from the GUI, it can be tested on its own
+and reused by other tools (scripts, batch conversions, etc.).
+
+IT — Modello dati e generazione documenti di RuscaWriter.
+
+Questo modulo è INDIPENDENTE dall'interfaccia grafica (non importa mai GTK):
 contiene la struttura del progetto (Chapter, Project), il generatore PDF
 nativo (write_pdf) e tutti gli export (TXT, Markdown, PDF, EPUB, ODT, DOCX,
-HTML, AZW3). Essendo separato dalla GUI, può essere testato da solo ed essere
-riusato da altri strumenti (script, conversioni batch, ecc.).
+HTML, AZW3), oltre agli helper per le immagini allegate ai capitoli
+(PNG/JPEG/WebP). Essendo separato dalla GUI, può essere testato da solo ed
+essere riusato da altri strumenti (script, conversioni batch, ecc.).
 """
 import os
 import io
@@ -20,11 +46,11 @@ import tempfile
 
 # --- costanti applicative condivise -----------------------------------------
 APP_NAME = "RuscaWriter"
-APP_VERSION = "0.2 (2026-06-14)"
+APP_VERSION = "0.3 (2026-07-04)"
 # numero di versione "nudo" (senza data), per i punti in cui la data e' gia'
 # mostrata a parte, come la schermata Informazioni
-APP_VERSION_SHORT = "0.2"
-APP_AUTHOR = "ruscalinux-dev"
+APP_VERSION_SHORT = "0.3"
+APP_AUTHOR = "Nunzio Curcuruto"
 
 # Campi strutturati del frontespizio e del colophon. L'ordine e' anche l'ordine
 # di impaginazione. Tutti i campi sono opzionali: quelli vuoti non compaiono.
@@ -478,6 +504,101 @@ def _cover_graphics_ops(page_w, page_h):
     return P
 
 
+# --- Immagini / Images ------------------------------------------------------
+# EN: Shared helpers for the "common image formats" the app accepts (PNG,
+#     JPEG, WebP): format sniffing from magic bytes, pixel size reading
+#     without external libraries, and conversion to JPEG for the PDF export
+#     (PDF embeds JPEG natively via DCTDecode).
+# IT: Helper condivisi per i "formati immagine comuni" accettati (PNG, JPEG,
+#     WebP): riconoscimento del formato dai byte iniziali, lettura delle
+#     dimensioni in pixel senza librerie esterne, e conversione in JPEG per
+#     l'export PDF (il PDF incorpora i JPEG nativamente via DCTDecode).
+
+# EN: canonical format name -> (file extension, MIME type)
+# IT: nome canonico del formato -> (estensione file, tipo MIME)
+IMAGE_FORMATS = {
+    "png":  ("png",  "image/png"),
+    "jpeg": ("jpg",  "image/jpeg"),
+    "webp": ("webp", "image/webp"),
+}
+
+
+def image_format(data):
+    """EN: Detect the image format from the magic bytes at the start of the
+    file. Returns 'png', 'jpeg', 'webp' or None if unsupported. Sniffing the
+    content (instead of trusting the file extension) makes attach robust.
+    IT: Riconosce il formato dai byte iniziali del file. Restituisce 'png',
+    'jpeg', 'webp' o None se non supportato. Annusare il contenuto (invece di
+    fidarsi dell'estensione) rende l'allegato robusto."""
+    if not data or len(data) < 12:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _png_dimensions(data):
+    """EN: Read (width, height) from the PNG IHDR chunk (always first, big
+    endian, at fixed offsets 16 and 20).
+    IT: Legge (larghezza, altezza) dal chunk IHDR del PNG (sempre il primo,
+    big endian, agli offset fissi 16 e 20)."""
+    try:
+        w, h = struct.unpack(">II", data[16:24])
+        return (w, h) if w and h else None
+    except Exception:
+        return None
+
+
+def _webp_dimensions(data):
+    """EN: Read (width, height) from a WebP file. WebP is a RIFF container;
+    the size lives in the first chunk, whose layout depends on the variant:
+    VP8 (lossy), VP8L (lossless) or VP8X (extended).
+    IT: Legge (larghezza, altezza) da un WebP. Il WebP e' un contenitore
+    RIFF; la dimensione sta nel primo chunk, il cui formato dipende dalla
+    variante: VP8 (lossy), VP8L (lossless) o VP8X (esteso)."""
+    try:
+        tag = data[12:16]
+        if tag == b"VP8X":
+            # EN: 24-bit little-endian fields store size minus one.
+            # IT: campi a 24 bit little-endian con dimensione meno uno.
+            w = int.from_bytes(data[24:27], "little") + 1
+            h = int.from_bytes(data[27:30], "little") + 1
+            return (w, h)
+        if tag == b"VP8L":
+            bits = int.from_bytes(data[21:25], "little")
+            w = (bits & 0x3FFF) + 1
+            h = ((bits >> 14) & 0x3FFF) + 1
+            return (w, h)
+        if tag == b"VP8 ":
+            # EN: lossy frame header: size at offset 26, 14 bits each.
+            # IT: header del frame lossy: dimensioni all'offset 26, 14 bit.
+            w = int.from_bytes(data[26:28], "little") & 0x3FFF
+            h = int.from_bytes(data[28:30], "little") & 0x3FFF
+            return (w, h) if w and h else None
+        return None
+    except Exception:
+        return None
+
+
+def image_dimensions(data, fmt=None):
+    """EN: (width, height) in pixels for PNG/JPEG/WebP data, or None. Used to
+    scale images in the exports without requiring Pillow.
+    IT: (larghezza, altezza) in pixel per dati PNG/JPEG/WebP, o None. Usata
+    per scalare le immagini negli export senza richiedere Pillow."""
+    fmt = fmt or image_format(data)
+    if fmt == "png":
+        return _png_dimensions(data)
+    if fmt == "jpeg":
+        return _jpeg_dimensions(data)
+    if fmt == "webp":
+        return _webp_dimensions(data)
+    return None
+
+
 def _jpeg_dimensions(data):
     """Estrae (larghezza, altezza) da un JPEG leggendo i marker SOF (stdlib)."""
     try:
@@ -497,14 +618,20 @@ def _jpeg_dimensions(data):
         return None
 
 
-def _prepare_cover_jpeg(data, fmt):
-    """Prepara l'immagine di copertina per l'incorporamento nel PDF.
-    Il PDF incorpora i JPEG (DCTDecode); i PNG no. Con Pillow convertiamo
-    qualsiasi immagine in JPEG RGB; senza Pillow usiamo il JPEG cosi' com'e';
-    altrimenti None (ripiego sulla copertina grafica).
-    Ritorna (jpeg_bytes, width, height) oppure None."""
+def _image_to_jpeg(data, fmt=None):
+    """EN: Prepare an image (cover or chapter attachment) for embedding in
+    the PDF. PDF embeds JPEG natively (DCTDecode) but not PNG/WebP. With
+    Pillow any image is converted to RGB JPEG; without Pillow a JPEG passes
+    through untouched; anything else returns None (the caller falls back).
+    Returns (jpeg_bytes, width, height) or None.
+    IT: Prepara un'immagine (copertina o allegato di capitolo) per
+    l'incorporamento nel PDF. Il PDF incorpora i JPEG nativamente
+    (DCTDecode) ma non PNG/WebP. Con Pillow ogni immagine viene convertita
+    in JPEG RGB; senza Pillow un JPEG passa cosi' com'e'; altrimenti None
+    (il chiamante ripiega). Ritorna (jpeg_bytes, width, height) o None."""
     if not data:
         return None
+    fmt = fmt or image_format(data)
     try:
         from PIL import Image
         import io as _io
@@ -523,6 +650,11 @@ def _prepare_cover_jpeg(data, fmt):
     return None
 
 
+# EN: A chapter line that is ONLY a Markdown image, e.g. ![caption](img_001.png)
+# IT: Riga di capitolo che e' SOLO un'immagine Markdown, es. ![didascalia](img_001.png)
+_IMG_LINE_RE = re.compile(r"^!\[(?P<alt>.*?)\]\((?P<src>[^)\s]+)\)\s*$")
+
+
 def write_pdf(path, chapters, title="",
               cover_paragraphs=None,
               chapter_titles=None, toc_label="Indice",
@@ -534,18 +666,32 @@ def write_pdf(path, chapters, title="",
               page_break_per_chapter=True,
               embed_fonts=None, embed_font_name="CourierPrime",
               cover_image=None,
+              chapter_images=None,
               frontispiece_paragraphs=None,
               colophon_paragraphs=None,
               blank_cover=False):
     """
-    Scrive un PDF usando solo la libreria standard, con markdown di base.
+    EN: Write a PDF using only the standard library, with basic Markdown.
+      chapters : list of chapters; each chapter = list of paragraphs (str).
+      cover_paragraphs : opening cover page (unnumbered).
+      embed_fonts : dict {style: metrics} for regular/bold/italic/bolditalic
+                    (from read_ttf_metrics). When present, the text uses the
+                    embedded font and renders bold/italic.
+      chapter_images : dict {internal_name: (jpeg_bytes, width, height)} of
+                    the attached chapter images, already converted to JPEG;
+                    a text line like ![caption](name) places the image.
+    IT: Scrive un PDF usando solo la libreria standard, con markdown di base.
       chapters : lista di capitoli; ogni capitolo = lista di paragrafi (str).
       cover_paragraphs : pagina copertina iniziale (senza numero).
       embed_fonts : dict {stile: metrics} per stile in regular/bold/italic/
                     bolditalic (da read_ttf_metrics). Se presente, il testo usa
                     il font incorporato e rende grassetto/corsivo.
+      chapter_images : dict {nome_interno: (jpeg_bytes, larg, alt)} delle
+                    immagini allegate ai capitoli, gia' convertite in JPEG;
+                    una riga di testo ![didascalia](nome) colloca l'immagine.
     """
     embed_fonts = embed_fonts or {}
+    chapter_images = chapter_images or {}
     reg = embed_fonts.get("regular")
     # advance per glifo (monospace -> uguale per tutti gli stili)
     adv = reg["advance1000"] if reg else None
@@ -816,6 +962,44 @@ def write_pdf(path, chapters, title="",
         chapter_start_page.append(pages_so_far + 1)
         for para in paragraphs:
             for raw_line in para.split("\n"):
+                # EN: a line that is ONLY ![caption](name) places the
+                #     attached image, centered and scaled to the text width
+                #     (never upscaled), followed by an italic caption. If the
+                #     image does not fit the remaining space, it moves to a
+                #     new page first.
+                # IT: una riga che e' SOLO ![didascalia](nome) colloca
+                #     l'immagine allegata, centrata e scalata alla larghezza
+                #     del testo (mai ingrandita), seguita dalla didascalia in
+                #     corsivo. Se l'immagine non entra nello spazio rimasto,
+                #     passa prima a una pagina nuova.
+                mimg = _IMG_LINE_RE.match(raw_line.strip())
+                if mimg and mimg.group("src") in chapter_images:
+                    _jpg, iw, ih = chapter_images[mimg.group("src")]
+                    max_h = (content_top_y - bottom_y) * 0.60
+                    scale = min(usable_w / iw, max_h / ih, 1.0)
+                    draw_w, draw_h = iw * scale, ih * scale
+                    if y - draw_h < bottom_y and cur_lines:
+                        flush_page()
+                        pages_so_far += 1
+                    ix = left_margin + (usable_w - draw_w) / 2.0
+                    # EN/IT: special entry, handled at page-emission time /
+                    # voce speciale, gestita al momento dell'emissione pagina
+                    cur_lines.append(("img", mimg.group("src"),
+                                      ix, y - draw_h, draw_w, draw_h))
+                    y -= draw_h + leading * 0.5
+                    alt = mimg.group("alt").strip()
+                    if alt:
+                        cap_sz = font_size * 0.85
+                        for row in _wrap_centered(alt, cap_sz):
+                            if y < bottom_y:
+                                flush_page()
+                                pages_so_far += 1
+                            lw = seg_w(row, cap_sz)
+                            cur_lines.append(((page_w - lw) / 2.0, y,
+                                              [(row, "italic")], cap_sz))
+                            y -= cap_sz * 1.4
+                        y -= leading * 0.3
+                    continue
                 segments, sz, indent, extra, _force = parse_md_line(raw_line, font_size)
                 line_leading = leading * (sz / font_size)
                 avail = usable_w - indent
@@ -970,6 +1154,11 @@ def write_pdf(path, chapters, title="",
 
     page_obj_ids = []
     visible_number = 0
+    # EN: each distinct attached image becomes ONE shared PDF XObject, reused
+    #     by every page that shows it: name -> object id.
+    # IT: ogni immagine allegata distinta diventa UN solo XObject PDF,
+    #     riutilizzato da ogni pagina che la mostra: nome -> id oggetto.
+    image_obj_ids = {}
     for i, (lines, kind) in enumerate(pages):
         parts = []
         # pagina copertina-immagine: kind = ("image", jpeg_bytes, w, h)
@@ -1013,10 +1202,44 @@ def write_pdf(path, chapters, title="",
             physical_page = i + 1           # 1 = prima pagina fisica (recto)
             if physical_page % 2 == 1:      # recto: interno a sinistra
                 page_shift = gutter
+        # EN: attached chapter images: drawn BEFORE the text block (outside
+        #     BT/ET, as required by the PDF graphics model). Each entry is
+        #     ("img", name, x, y, w, h); the XObject is created once and its
+        #     id is referenced by this page's /XObject resources.
+        # IT: immagini allegate ai capitoli: disegnate PRIMA del blocco di
+        #     testo (fuori da BT/ET, come richiede il modello grafico PDF).
+        #     Ogni voce e' ("img", nome, x, y, w, h); l'XObject viene creato
+        #     una sola volta e il suo id e' citato nelle risorse /XObject
+        #     della pagina.
+        page_xobjects = {}
+        text_lines = []
+        for entry in lines:
+            if entry and entry[0] == "img":
+                _tag, iname, ix, iy, dw, dh = entry
+                oid = image_obj_ids.get(iname)
+                if oid is None:
+                    jpeg_b, iw, ih = chapter_images[iname]
+                    oid = add_obj(
+                        (f"<< /Type /XObject /Subtype /Image /Width {iw} "
+                         f"/Height {ih} /ColorSpace /DeviceRGB "
+                         f"/BitsPerComponent 8 /Filter /DCTDecode "
+                         f"/Length {len(jpeg_b)} >>\nstream\n").encode("latin-1")
+                        + jpeg_b + b"\nendstream")
+                    image_obj_ids[iname] = oid
+                res_name = f"ImA{oid}"
+                page_xobjects[res_name] = oid
+                parts.append(b"q")
+                parts.append(f"{dw:.2f} 0 0 {dh:.2f} "
+                             f"{ix + page_shift:.2f} {iy:.2f} cm"
+                             .encode("latin-1"))
+                parts.append(f"/{res_name} Do".encode("latin-1"))
+                parts.append(b"Q")
+            else:
+                text_lines.append(entry)
         parts.append(b"BT")
         cur_fid = None
         cur_size = None
-        for (x, ly, runs, sz) in lines:
+        for (x, ly, runs, sz) in text_lines:
             parts.append(f"1 0 0 1 {x + page_shift:.2f} {ly:.2f} Tm".encode("latin-1"))
             for (text, style) in runs:
                 if text == "":
@@ -1053,10 +1276,18 @@ def write_pdf(path, chapters, title="",
         body = (f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
                 + stream + b"\nendstream")
         cid = add_obj(body)
+        # EN: page resources: shared fonts plus this page's image XObjects.
+        # IT: risorse di pagina: font condivisi piu' gli XObject immagine
+        #     di questa pagina.
+        xres = ""
+        if page_xobjects:
+            xrefs = " ".join(f"/{n} {oid} 0 R"
+                             for n, oid in page_xobjects.items())
+            xres = f"/XObject << {xrefs} >> "
         pid = add_obj(
             (f"<< /Type /Page /Parent {pages_obj_id} 0 R "
              f"/MediaBox [0 0 {page_w:.0f} {page_h:.0f}] "
-             f"/Resources << /Font << {font_res} >> >> "
+             f"/Resources << /Font << {font_res} >> {xres}>> "
              f"/Contents {cid} 0 R >>").encode("latin-1"))
         page_obj_ids.append(pid)
 
@@ -1359,14 +1590,22 @@ class Project:
         self._lang = "it"         # lingua per le etichette degli export
         # --- sezioni editoriali opzionali -----------------------------------
         self.cover_image = None
-        self.cover_image_fmt = None      # "png" | "jpeg"
+        self.cover_image_fmt = None      # "png" | "jpeg" | "webp"
+        # EN: images attached inside chapters: name -> raw bytes. Names are
+        #     img_001.png, img_002.webp, ... and are referenced from the text
+        #     with standard Markdown: ![caption](img_001.png)
+        # IT: immagini allegate nei capitoli: nome -> byte grezzi. I nomi sono
+        #     img_001.png, img_002.webp, ... e sono richiamati dal testo con
+        #     Markdown standard: ![didascalia](img_001.png)
+        self.images = {}
         # frontespizio e colophon come CAMPI strutturati (formattazione
         # professionale decisa dal programma). Vedi FRONT_FIELDS / COLO_FIELDS.
         self.frontispiece_fields = {k: "" for k in FRONT_FIELDS}
         self.colophon_fields = {k: "" for k in COLO_FIELDS}
 
     def set_cover_image(self, data, fmt):
-        """Imposta l'immagine di copertina. fmt: 'png' o 'jpeg'."""
+        """EN: Set the cover image. fmt: 'png', 'jpeg' or 'webp'.
+        IT: Imposta l'immagine di copertina. fmt: 'png', 'jpeg' o 'webp'."""
         self.cover_image = data
         self.cover_image_fmt = fmt
 
@@ -1376,6 +1615,64 @@ class Project:
 
     def has_cover_image(self):
         return bool(self.cover_image)
+
+    # ---- immagini nei capitoli / chapter images ----------------------------
+    def add_image(self, data):
+        """EN: Store an attached image (PNG/JPEG/WebP, detected from the
+        content) and return its internal name (e.g. 'img_001.png'), ready to
+        be referenced from the text as ![caption](img_001.png).
+        Raises ValueError for unsupported formats.
+        IT: Registra un'immagine allegata (PNG/JPEG/WebP, riconosciuta dal
+        contenuto) e restituisce il suo nome interno (es. 'img_001.png'),
+        pronto per essere richiamato dal testo come ![didascalia](img_001.png).
+        Solleva ValueError per i formati non supportati."""
+        fmt = image_format(data)
+        if fmt is None:
+            raise ValueError("Formato immagine non supportato "
+                             "(usa PNG, JPEG o WebP). / Unsupported image "
+                             "format (use PNG, JPEG or WebP).")
+        ext = IMAGE_FORMATS[fmt][0]
+        # EN: first free progressive number, so deleting one image never
+        #     breaks the names of the others.
+        # IT: primo numero progressivo libero, cosi' eliminare un'immagine
+        #     non rompe mai i nomi delle altre.
+        n = 1
+        while any(name.startswith(f"img_{n:03d}.") for name in self.images):
+            n += 1
+        name = f"img_{n:03d}.{ext}"
+        self.images[name] = data
+        return name
+
+    def image_mime(self, name):
+        """EN: MIME type of an attached image (from its content).
+        IT: Tipo MIME di un'immagine allegata (dal suo contenuto)."""
+        fmt = image_format(self.images.get(name, b""))
+        return IMAGE_FORMATS[fmt][1] if fmt else "application/octet-stream"
+
+    def _image_data_uri(self, name):
+        """EN: base64 data URI of an attached image (single-file HTML export).
+        IT: data URI base64 di un'immagine allegata (export HTML a file unico)."""
+        data = self.images.get(name)
+        if not data:
+            return None
+        import base64
+        b64 = base64.b64encode(data).decode("ascii")
+        return f"data:{self.image_mime(name)};base64,{b64}"
+
+    def used_images(self):
+        """EN: Names of the attached images actually referenced by at least
+        one chapter, in first-appearance order (exports only ship these).
+        IT: Nomi delle immagini allegate effettivamente richiamate da almeno
+        un capitolo, in ordine di prima apparizione (gli export includono
+        solo queste)."""
+        seen = []
+        for ch in self.chapters:
+            for line in ch.text.split("\n"):
+                m = _IMG_LINE_RE.match(line.strip())
+                if m and m.group("src") in self.images \
+                        and m.group("src") not in seen:
+                    seen.append(m.group("src"))
+        return seen
 
     # ---- creazione / caricamento -------------------------------------------
     def _make_cover_text(self, title):
@@ -1392,6 +1689,7 @@ class Project:
         self.path = None
         self.cover_image = None
         self.cover_image_fmt = None
+        self.images = {}
         self.frontispiece_fields = {k: "" for k in FRONT_FIELDS}
         self.colophon_fields = {k: "" for k in COLO_FIELDS}
         cover = Chapter(0, self._make_cover_text(title), "", is_cover=True)
@@ -1418,6 +1716,7 @@ class Project:
         self.meta = {}
         self.cover_image = None
         self.cover_image_fmt = None
+        self.images = {}
         self.frontispiece_fields = {k: "" for k in FRONT_FIELDS}
         self.colophon_fields = {k: "" for k in COLO_FIELDS}
         cover = Chapter(0, self._make_cover_text(title), "", is_cover=True)
@@ -1522,6 +1821,10 @@ class Project:
         self.colophon_fields = {k: "" for k in COLO_FIELDS}
         self.cover_image = None
         self.cover_image_fmt = None
+        # EN: attached chapter images travel inside the archive as img_*.<ext>
+        # IT: le immagini allegate viaggiano nell'archivio come img_*.<ext>
+        self.images = {n: b for n, b in contents.items()
+                       if re.match(r"^img_\d+\.(png|jpe?g|webp)$", n)}
         # nuovo formato: campi strutturati in JSON
         if "frontispiece.json" in names:
             try:
@@ -1553,12 +1856,14 @@ class Project:
                     self.colophon_fields["notes"] = old
             except Exception:
                 pass
-        if "cover.jpg" in names:
-            self.cover_image = contents["cover.jpg"]; self.cover_image_fmt = "jpeg"
-        elif "cover.jpeg" in names:
-            self.cover_image = contents["cover.jpeg"]; self.cover_image_fmt = "jpeg"
-        elif "cover.png" in names:
-            self.cover_image = contents["cover.png"]; self.cover_image_fmt = "png"
+        # EN: cover image, in any of the accepted formats.
+        # IT: immagine di copertina, in uno qualsiasi dei formati accettati.
+        for cname, cfmt in (("cover.jpg", "jpeg"), ("cover.jpeg", "jpeg"),
+                            ("cover.png", "png"), ("cover.webp", "webp")):
+            if cname in names:
+                self.cover_image = contents[cname]
+                self.cover_image_fmt = cfmt
+                break
 
     def _renumber(self):
         """Copertina = 0, capitoli di contenuto = 1,2,3..."""
@@ -1610,8 +1915,13 @@ class Project:
                     add("colophon.json",
                         json.dumps(self.colophon_fields,
                                    ensure_ascii=False, indent=2).encode("utf-8"))
+                # EN: attached chapter images, each as its own archive entry.
+                # IT: immagini allegate ai capitoli, una voce d'archivio ciascuna.
+                for iname, idata in self.images.items():
+                    add(iname, idata)
                 if self.cover_image and self.cover_image_fmt:
-                    ext = "jpg" if self.cover_image_fmt == "jpeg" else "png"
+                    ext = IMAGE_FORMATS.get(self.cover_image_fmt,
+                                            ("png",))[0]
                     add(f"cover.{ext}", self.cover_image)
             shutil.move(tmp, dest)
         finally:
@@ -1646,7 +1956,16 @@ class Project:
                 if ch.is_cover:
                     continue
                 sep()
-                out.write(ch.text.rstrip("\n"))
+                # EN: plain text cannot embed pictures: each attached image
+                #     becomes a bracketed line with its caption (or name).
+                # IT: il testo semplice non incorpora figure: ogni immagine
+                #     allegata diventa una riga tra parentesi con la sua
+                #     didascalia (o il nome).
+                body = "\n".join(
+                    f"[{(m.group('alt') or m.group('src')).strip()}]"
+                    if (m := _IMG_LINE_RE.match(ln.strip())) else ln
+                    for ln in ch.text.split("\n"))
+                out.write(body.rstrip("\n"))
                 out.write("\n")
             colo = self._colophon_paragraphs()
             if colo:
@@ -1767,7 +2086,10 @@ class Project:
         return [t for (t, _r) in self._colophon_lines()]
 
     def _cover_image_mime(self):
-        return "image/jpeg" if self.cover_image_fmt == "jpeg" else "image/png"
+        """EN: MIME type of the cover image ('image/png' fallback).
+        IT: Tipo MIME dell'immagine di copertina (ripiego 'image/png')."""
+        return IMAGE_FORMATS.get(self.cover_image_fmt,
+                                 (None, "image/png"))[1]
 
     def _cover_image_data_uri(self):
         """Data URI base64 dell'immagine di copertina, per incorporarla inline
@@ -1779,11 +2101,41 @@ class Project:
         return f"data:{self._cover_image_mime()};base64,{b64}"
 
     def export_markdown(self, path):
-        """Esporta tutto il progetto in un unico file Markdown.
-        Titolo come H1, copertina come blocco iniziale, ogni capitolo con la
-        propria intestazione H2 (se il testo non ne ha già una)."""
+        """EN: Export the whole project to a single Markdown file. Title as
+        H1, cover as the opening block, each chapter with its own H2 heading
+        (unless the text already starts with one). Attached images are copied
+        to a sibling '<name>_img/' folder and the ![..](..) references are
+        rewritten to point there, so the exported file works anywhere.
+        IT: Esporta tutto il progetto in un unico file Markdown. Titolo come
+        H1, copertina come blocco iniziale, ogni capitolo con la propria
+        intestazione H2 (se il testo non ne ha già una). Le immagini allegate
+        vengono copiate in una cartella affiancata '<nome>_img/' e i
+        riferimenti ![..](..) riscritti verso di essa, così il file esportato
+        funziona ovunque."""
         cover_lines = self._cover_lines()
         title = cover_lines[0] if cover_lines else self.title
+
+        # EN/IT: images folder next to the .md / cartella immagini accanto al .md
+        used = self.used_images()
+        img_dir_name = os.path.splitext(os.path.basename(path))[0] + "_img"
+        if used:
+            img_dir = os.path.join(os.path.dirname(path) or ".", img_dir_name)
+            os.makedirs(img_dir, exist_ok=True)
+            for n in used:
+                with open(os.path.join(img_dir, n), "wb") as imgf:
+                    imgf.write(self.images[n])
+
+        def rewrite_refs(text):
+            # EN: only the internal names get the folder prefix; any other
+            #     Markdown image the author wrote is left untouched.
+            # IT: solo i nomi interni ricevono il prefisso cartella; ogni
+            #     altra immagine Markdown scritta dall'autore resta intatta.
+            return "\n".join(
+                f"![{m.group('alt')}]({img_dir_name}/{m.group('src')})"
+                if (m := _IMG_LINE_RE.match(ln.strip()))
+                and m.group("src") in self.images else ln
+                for ln in text.split("\n"))
+
         with open(path, "w", encoding="utf-8") as out:
             out.write(f"# {title}\n\n")
             # autore e data della copertina, in corsivo
@@ -1800,9 +2152,11 @@ class Project:
                         out.write(f"*{ln}*\n\n")
                 out.write("---\n\n")
             for ch_title, text in self._ordered_chapters():
-                body = text.rstrip("\n")
-                # se il testo inizia già con un'intestazione markdown, non
-                # aggiungiamo un titolo doppio
+                body = rewrite_refs(text.rstrip("\n"))
+                # EN: if the text already opens with a Markdown heading we do
+                #     not add a duplicate title.
+                # IT: se il testo inizia già con un'intestazione markdown, non
+                #     aggiungiamo un titolo doppio.
                 first = body.lstrip().split("\n", 1)[0] if body else ""
                 if not first.startswith("#"):
                     out.write(f"## {ch_title}\n\n")
@@ -1816,15 +2170,23 @@ class Project:
                     out.write(f"*{ln}*\n\n")
 
     def _doc_blocks(self, text):
-        """Trasforma il markdown di un capitolo in una lista di blocchi
+        """EN: Turn a chapter's Markdown into a list of (kind, content)
+        blocks shared by the ODT and DOCX exports. Kinds: h1/h2/h3, bullet,
+        quote, p, and image (content = (caption, internal_name)). Inline
+        formatting is stripped (plain text) to stay simple and robust.
+        IT: Trasforma il markdown di un capitolo in una lista di blocchi
         (tipo, contenuto) usata sia da ODT sia da DOCX. Tipi: h1/h2/h3,
-        bullet, quote, p. La formattazione inline viene rimossa (testo piano)
-        per restare semplice e robusta."""
-        import re
+        bullet, quote, p e image (contenuto = (didascalia, nome_interno)).
+        La formattazione inline viene rimossa (testo piano) per restare
+        semplice e robusta."""
         blocks = []
         for raw in text.split("\n"):
             s = raw.strip()
             if not s:
+                continue
+            mi = _IMG_LINE_RE.match(s)
+            if mi and mi.group("src") in self.images:
+                blocks.append(("image", (mi.group("alt"), mi.group("src"))))
                 continue
             m = re.match(r"^(#{1,6})\s+(.*)$", s)
             if m:
@@ -1840,12 +2202,33 @@ class Project:
                 blocks.append(("p", _strip_inline_md(s)))
         return blocks
 
-    def _blocks_to_html(self, text):
-        """Converte il markdown di un capitolo in HTML (lista di stringhe),
-        riconoscendo titoli, elenchi, citazioni e formattazione inline
-        (grassetto, corsivo, codice). Usato dall'export HTML."""
-        import re
+    def _blocks_to_html(self, text, image_html=None):
+        """EN: Convert a chapter's Markdown to HTML (list of strings),
+        recognizing headings, lists, quotes, attached images and inline
+        formatting (bold, italic, code). Used by the HTML and EPUB exports.
+        image_html(caption, name) returns the markup for an attached image
+        (or None to skip it); the default emits a <figure> whose <img>
+        embeds the bytes as a base64 data URI (self-contained single file).
+        IT: Converte il markdown di un capitolo in HTML (lista di stringhe),
+        riconoscendo titoli, elenchi, citazioni, immagini allegate e
+        formattazione inline (grassetto, corsivo, codice). Usato dagli
+        export HTML ed EPUB. image_html(didascalia, nome) restituisce il
+        markup per un'immagine allegata (o None per ometterla); il default
+        emette un <figure> il cui <img> incorpora i byte come data URI
+        base64 (file unico autosufficiente)."""
         from xml.sax.saxutils import escape as esc
+
+        def default_image_html(alt, name):
+            # EN: one image per <figure>, caption below when present.
+            # IT: un'immagine per <figure>, didascalia sotto se presente.
+            src = self._image_data_uri(name)
+            if not src:
+                return None
+            cap = f"<figcaption>{esc(alt)}</figcaption>" if alt.strip() else ""
+            return (f'<figure class="attached"><img src="{esc(src)}" '
+                    f'alt="{esc(alt)}"/>{cap}</figure>')
+
+        figure = image_html or default_image_html
 
         def inline(s):
             s = esc(s)
@@ -1862,6 +2245,18 @@ class Project:
         while i < len(lines):
             s = lines[i].strip()
             if not s:
+                i += 1
+                continue
+            mi = _IMG_LINE_RE.match(s)
+            if mi:
+                # EN: attached image; if the reference is broken (image not in
+                #     the project) fall back to showing the caption only.
+                # IT: immagine allegata; se il riferimento e' rotto (immagine
+                #     assente dal progetto) ripiega sulla sola didascalia.
+                fig = (figure(mi.group("alt"), mi.group("src"))
+                       if mi.group("src") in self.images else None)
+                out.append(fig if fig else
+                           f"<p><em>{esc(mi.group('alt'))}</em></p>")
                 i += 1
                 continue
             m = re.match(r"^(#{1,6})\s+(.*)$", s)
@@ -1886,9 +2281,14 @@ class Project:
                 out.append(f"<blockquote>{inline(s.lstrip('>').strip())}</blockquote>")
                 i += 1
             else:
+                # EN: plain paragraph: merge contiguous lines, but stop at any
+                #     block starter (heading, list, quote, attached image).
+                # IT: paragrafo semplice: accorpa righe contigue, ma si ferma
+                #     a ogni inizio blocco (titolo, elenco, citazione,
+                #     immagine allegata).
                 buf = []
                 while i < len(lines) and lines[i].strip() and not re.match(
-                        r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>)", lines[i].strip()):
+                        r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>|!\[)", lines[i].strip()):
                     buf.append(inline(lines[i].strip()))
                     i += 1
                 out.append("<p>" + "<br/>".join(buf) + "</p>")
@@ -1906,6 +2306,11 @@ class Project:
         ".cover .date{font-style:italic;color:#777;}"
         ".cover-image{text-align:center;margin:0 0 2em 0;}"
         ".cover-image img{max-width:100%;height:auto;}"
+        # EN/IT: attached chapter images / immagini allegate ai capitoli
+        "figure.attached{text-align:center;margin:2em 0;}"
+        "figure.attached img{max-width:100%;height:auto;}"
+        "figure.attached figcaption{font-style:italic;color:#666;"
+        "font-size:0.9em;margin-top:0.5em;}"
         ".frontispiece{text-align:center;margin:3em 0;}"
         ".frontispiece .ftitle{font-size:1.6em;font-weight:bold;color:#5C2A55;}"
         ".colophon{margin-top:3em;border-top:1px solid #d9b8d4;padding-top:1em;"
@@ -2027,7 +2432,7 @@ class Project:
         # salva l'immagine di copertina come file nella cartella, se presente
         cover_src = None
         if self.cover_image:
-            ext = "jpg" if self.cover_image_fmt == "jpeg" else "png"
+            ext = IMAGE_FORMATS.get(self.cover_image_fmt, ("png",))[0]
             cover_name = f"cover.{ext}"
             with open(os.path.join(folder, cover_name), "wb") as imgf:
                 imgf.write(self.cover_image)
@@ -2082,12 +2487,17 @@ class Project:
 
         # corpo del documento in formato Open Document
         body = []
+        # EN: every picture shipped in the archive: (zip path, MIME, bytes).
+        #     Holds the cover (if any) plus the attached chapter images.
+        # IT: tutte le immagini incluse nell'archivio: (percorso zip, MIME,
+        #     byte). Contiene la copertina (se c'e') e le immagini allegate.
+        img_entries = []
         # immagine di copertina (se presente) come frame a piena larghezza
-        cover_img_entry = None
         if self.cover_image:
-            ext = "jpg" if self.cover_image_fmt == "jpeg" else "png"
+            ext = IMAGE_FORMATS.get(self.cover_image_fmt, ("png",))[0]
             img_path = f"Pictures/cover.{ext}"
-            cover_img_entry = (img_path, self._cover_image_mime(), self.cover_image)
+            img_entries.append((img_path, self._cover_image_mime(),
+                                self.cover_image))
             # dimensioni in cm: stima per stare nella pagina (~16cm larghezza)
             from_w, from_h = 16.0, 22.0
             try:
@@ -2124,6 +2534,33 @@ class Project:
                 body.append(f'<text:h text:style-name="Heading_20_1" '
                             f'text:outline-level="1">{escape(ch_title)}</text:h>')
             for kind, content in body_blocks:
+                if kind == "image":
+                    # EN: attached image as a centered frame + italic caption.
+                    #     Width fits the page (max 14 cm), height keeps the
+                    #     aspect ratio read from the file itself.
+                    # IT: immagine allegata come cornice centrata + didascalia
+                    #     in corsivo. Larghezza entro la pagina (max 14 cm),
+                    #     altezza con le proporzioni lette dal file stesso.
+                    alt, iname = content
+                    data = self.images[iname]
+                    dims = image_dimensions(data) or (1400, 1000)
+                    w_cm = 14.0
+                    h_cm = min(20.0, w_cm * dims[1] / dims[0])
+                    ipath = f"Pictures/{iname}"
+                    img_entries.append((ipath, self.image_mime(iname), data))
+                    body.append(
+                        '<text:p text:style-name="Author">'
+                        f'<draw:frame draw:name="{iname}" '
+                        'text:anchor-type="as-char" '
+                        f'svg:width="{w_cm:.2f}cm" svg:height="{h_cm:.2f}cm" '
+                        'draw:z-index="0">'
+                        f'<draw:image xlink:href="{ipath}" '
+                        'xlink:type="simple" xlink:show="embed" '
+                        'xlink:actuate="onLoad"/></draw:frame></text:p>')
+                    if alt.strip():
+                        body.append(f'<text:p text:style-name="Caption">'
+                                    f'{escape(alt)}</text:p>')
+                    continue
                 c = escape(content)
                 if kind.startswith("h"):
                     lvl = kind[1]
@@ -2164,6 +2601,9 @@ class Project:
             '<style:style style:name="Quote" style:family="paragraph">'
             '<style:paragraph-properties fo:margin-left="1cm"/>'
             '<style:text-properties fo:font-style="italic"/></style:style>\n'
+            '<style:style style:name="Caption" style:family="paragraph">'
+            '<style:paragraph-properties fo:text-align="center"/>'
+            '<style:text-properties fo:font-size="10pt" fo:font-style="italic"/></style:style>\n'
             '</office:automatic-styles>\n'
             '<office:body><office:text>\n'
             + "\n".join(body) +
@@ -2192,11 +2632,11 @@ class Project:
             '</style:style>\n'
             '</office:styles></office:document-styles>\n')
 
-        img_manifest = ""
-        if cover_img_entry:
-            ipath, imime, _ = cover_img_entry
-            img_manifest = (f'<manifest:file-entry manifest:full-path="{ipath}" '
-                            f'manifest:media-type="{imime}"/>\n')
+        # EN/IT: one manifest entry per picture / una voce per immagine
+        img_manifest = "".join(
+            f'<manifest:file-entry manifest:full-path="{ipath}" '
+            f'manifest:media-type="{imime}"/>\n'
+            for (ipath, imime, _d) in img_entries)
         manifest = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<manifest:manifest '
@@ -2218,8 +2658,7 @@ class Project:
             z.writestr("content.xml", content_xml, zipfile.ZIP_DEFLATED)
             z.writestr("styles.xml", styles_xml, zipfile.ZIP_DEFLATED)
             z.writestr("META-INF/manifest.xml", manifest, zipfile.ZIP_DEFLATED)
-            if cover_img_entry:
-                ipath, _, idata = cover_img_entry
+            for (ipath, _m, idata) in img_entries:
                 z.writestr(ipath, idata, zipfile.ZIP_STORED)
 
     def export_docx(self, path):
@@ -2250,42 +2689,72 @@ class Project:
             return (f'<w:p>{ppr_xml}<w:r>{rpr_xml}'
                     f'<w:t xml:space="preserve">{escape(text)}</w:t></w:r></w:p>')
 
-        # immagine di copertina (se presente): preparo i dati e un blocco
-        # <w:drawing> da inserire come primo paragrafo
-        cover_img_data = None
-        cover_img_ext = None
-        cover_drawing = None
-        if self.cover_image:
-            cover_img_data = self.cover_image
-            cover_img_ext = "jpg" if self.cover_image_fmt == "jpeg" else "png"
-            # dimensioni in EMU (1 cm = 360000 EMU); larghezza ~16cm
-            cm = 360000
-            w_emu = int(16 * cm)
-            h_emu = int(22 * cm)
-            try:
-                from PIL import Image as _PILImage
-                import io as _io
-                _im = _PILImage.open(_io.BytesIO(self.cover_image))
-                iw, ih = _im.size
-                h_emu = int(min(24, 16 * ih / iw) * cm)
-            except Exception:
-                pass
-            cover_drawing = (
+        # EN: pictures shipped inside word/media/: (relationship id,
+        #     file name, bytes). Word cannot display WebP, so WebP data is
+        #     converted to JPEG with Pillow when possible; if the conversion
+        #     is unavailable the image is skipped (caption only).
+        # IT: immagini incluse in word/media/: (id relazione, nome file,
+        #     byte). Word non visualizza il WebP, quindi i dati WebP vengono
+        #     convertiti in JPEG con Pillow quando possibile; se la
+        #     conversione non e' disponibile l'immagine viene omessa (resta
+        #     la didascalia).
+        media = []
+        CM = 360000       # EN/IT: 1 cm in EMU / 1 cm in EMU (unita' di Word)
+
+        def docx_ready(data, fmt):
+            """EN: (bytes, ext, w_px, h_px) suitable for Word, or None.
+            IT: (byte, estensione, larg_px, alt_px) adatti a Word, o None."""
+            fmt = fmt or image_format(data)
+            if fmt in ("png", "jpeg"):
+                dims = image_dimensions(data, fmt) or (1600, 1000)
+                return data, IMAGE_FORMATS[fmt][0], dims[0], dims[1]
+            jpg = _image_to_jpeg(data, fmt)     # WebP -> JPEG (con Pillow)
+            if jpg:
+                return jpg[0], "jpg", jpg[1], jpg[2]
+            return None
+
+        def drawing(rid, name, w_emu, h_emu, num):
+            """EN: minimal Office Open XML inline picture block.
+            IT: blocco minimo Office Open XML per un'immagine inline."""
+            return (
                 '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'
                 f'<wp:inline distT="0" distB="0" distL="0" distR="0">'
                 f'<wp:extent cx="{w_emu}" cy="{h_emu}"/>'
-                '<wp:docPr id="1" name="cover"/>'
+                f'<wp:docPr id="{num}" name="{name}"/>'
                 '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
                 '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
                 '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
-                '<pic:nvPicPr><pic:cNvPr id="1" name="cover"/><pic:cNvPicPr/></pic:nvPicPr>'
-                '<pic:blipFill><a:blip r:embed="rIdImg" '
+                f'<pic:nvPicPr><pic:cNvPr id="{num}" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr>'
+                f'<pic:blipFill><a:blip r:embed="{rid}" '
                 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
                 '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
                 '<pic:spPr><a:xfrm><a:off x="0" y="0"/>'
                 f'<a:ext cx="{w_emu}" cy="{h_emu}"/></a:xfrm>'
                 '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
                 '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>')
+
+        def add_picture(data, fmt, base_name, max_w_cm=16.0, max_h_cm=24.0):
+            """EN: register a picture and return its <w:drawing> paragraph,
+            or None when the image cannot be embedded.
+            IT: registra un'immagine e restituisce il suo paragrafo
+            <w:drawing>, o None quando non puo' essere incorporata."""
+            ready = docx_ready(data, fmt)
+            if not ready:
+                return None
+            bts, ext, iw, ih = ready
+            num = len(media) + 1
+            rid = f"rIdImg{num}"
+            fname = f"{base_name}.{ext}"
+            media.append((rid, fname, bts))
+            w_cm = max_w_cm
+            h_cm = min(max_h_cm, w_cm * ih / iw)
+            return drawing(rid, base_name, int(w_cm * CM), int(h_cm * CM), num)
+
+        # immagine di copertina (se presente) come primo paragrafo
+        cover_drawing = None
+        if self.cover_image:
+            cover_drawing = add_picture(self.cover_image,
+                                        self.cover_image_fmt, "cover")
 
         paras = []
         # copertina: immagine se presente, altrimenti testo
@@ -2314,6 +2783,19 @@ class Project:
             if not starts_with_heading:
                 paras.append(para(ch_title, bold=True, size=18, color="5C2A55"))
             for kind, content in body_blocks:
+                if kind == "image":
+                    # EN: attached image + optional italic caption below.
+                    # IT: immagine allegata + eventuale didascalia in corsivo.
+                    alt, iname = content
+                    d = add_picture(self.images[iname], None,
+                                    os.path.splitext(iname)[0],
+                                    max_w_cm=14.0, max_h_cm=20.0)
+                    if d:
+                        paras.append(d)
+                    if alt.strip():
+                        paras.append(para(alt, size=10, align="center",
+                                          color="666666"))
+                    continue
                 if kind == "h1":
                     paras.append(para(content, bold=True, size=18, color="5C2A55"))
                 elif kind == "h2":
@@ -2347,13 +2829,15 @@ class Project:
             '</w:sectPr>'
             '</w:body></w:document>')
 
+        # EN: declare the MIME type once per extension actually used.
+        # IT: dichiara il tipo MIME una volta per estensione davvero usata.
+        exts = {fname.rsplit(".", 1)[1] for (_r, fname, _b) in media}
         img_ct = ""
-        if cover_img_data:
-            if cover_img_ext == "jpg":
-                img_ct = ('<Default Extension="jpg" ContentType="image/jpeg"/>'
-                          '<Default Extension="jpeg" ContentType="image/jpeg"/>')
-            else:
-                img_ct = '<Default Extension="png" ContentType="image/png"/>'
+        if "jpg" in exts:
+            img_ct += ('<Default Extension="jpg" ContentType="image/jpeg"/>'
+                       '<Default Extension="jpeg" ContentType="image/jpeg"/>')
+        if "png" in exts:
+            img_ct += '<Default Extension="png" ContentType="image/png"/>'
         content_types = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
             '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -2375,26 +2859,29 @@ class Project:
             'relationships/officeDocument" Target="word/document.xml"/>'
             '</Relationships>')
 
-        # relazioni del documento: collega l'immagine (rIdImg) se presente
+        # EN: document relationships: one entry per embedded picture.
+        # IT: relazioni del documento: una voce per ogni immagine incorporata.
         doc_rels = None
-        if cover_img_data:
-            img_target = f"media/cover.{cover_img_ext}"
+        if media:
+            rel_items = "".join(
+                f'<Relationship Id="{rid}" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                f'relationships/image" Target="media/{fname}"/>'
+                for (rid, fname, _b) in media)
             doc_rels = (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
                 '<Relationships '
                 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                f'<Relationship Id="rIdImg" '
-                'Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-                f'relationships/image" Target="{img_target}"/>'
-                '</Relationships>')
+                + rel_items + '</Relationships>')
 
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("[Content_Types].xml", content_types)
             z.writestr("_rels/.rels", rels)
             z.writestr("word/document.xml", document)
-            if cover_img_data:
+            if media:
                 z.writestr("word/_rels/document.xml.rels", doc_rels)
-                z.writestr(f"word/media/cover.{cover_img_ext}", cover_img_data)
+                for (_rid, fname, bts) in media:
+                    z.writestr(f"word/media/{fname}", bts)
 
 
     def export_pdf(self, path, font_size=12, embed_fonts=None,
@@ -2428,7 +2915,19 @@ class Project:
         leading = int(round(font_size * 1.45))
         cover_img = None
         if self.cover_image:
-            cover_img = _prepare_cover_jpeg(self.cover_image, self.cover_image_fmt)
+            cover_img = _image_to_jpeg(self.cover_image, self.cover_image_fmt)
+        # EN: attached chapter images, converted to JPEG for embedding (the
+        #     PDF stream uses DCTDecode). Images that cannot be converted
+        #     (e.g. WebP without Pillow) are skipped: their caption remains.
+        # IT: immagini allegate ai capitoli, convertite in JPEG per
+        #     l'incorporamento (lo stream PDF usa DCTDecode). Le immagini non
+        #     convertibili (es. WebP senza Pillow) vengono omesse: resta la
+        #     loro didascalia.
+        chapter_images = {}
+        for iname in self.used_images():
+            prepared = _image_to_jpeg(self.images[iname])
+            if prepared:
+                chapter_images[iname] = prepared
         # copertina bianca e vuota se non c'e' immagine e i campi delle
         # Sezioni editoriali del frontespizio sono tutti vuoti
         blank_cover = self.cover_is_blank()
@@ -2447,6 +2946,7 @@ class Project:
                   page_break_per_chapter=True,
                   embed_fonts=embed_fonts, embed_font_name=embed_font_name,
                   cover_image=cover_img,
+                  chapter_images=chapter_images,
                   frontispiece_paragraphs=front,
                   colophon_paragraphs=colo,
                   blank_cover=blank_cover)
@@ -2635,58 +3135,26 @@ class Project:
         def esc(s):
             return html.escape(s, quote=False)
 
-        def md_to_html(text):
-            """Converte il markdown di base di un capitolo in XHTML."""
-            def inline(s):
-                s = esc(s)
-                s = re.sub(r"\[(.+?)\]\((.+?)\)", r"\1", s)
-                s = re.sub(r"(\*\*\*|___)(.+?)\1", r"<strong><em>\2</em></strong>", s)
-                s = re.sub(r"(\*\*|__)(.+?)\1", r"<strong>\2</strong>", s)
-                s = re.sub(r"(\*|_)(.+?)\1", r"<em>\2</em>", s)
-                s = re.sub(r"`(.+?)`", r"<code>\1</code>", s)
-                return s
+        # EN: attached images referenced by the chapters: they are shipped in
+        #     OEBPS/images/ and listed in the manifest with their MIME type.
+        # IT: immagini allegate richiamate dai capitoli: vengono incluse in
+        #     OEBPS/images/ ed elencate nel manifest con il loro tipo MIME.
+        used_imgs = self.used_images()
 
-            out = []
-            lines = text.split("\n")
-            i = 0
-            while i < len(lines):
-                raw = lines[i]
-                st = raw.strip()
-                if not st:
-                    i += 1
-                    continue
-                m = re.match(r"^(#{1,6})\s+(.*)$", st)
-                if m:
-                    lvl = len(m.group(1))
-                    out.append(f"<h{lvl}>{inline(m.group(2))}</h{lvl}>")
-                    i += 1
-                    continue
-                if st[:2] in ("- ", "* ", "+ "):
-                    items = []
-                    while i < len(lines) and lines[i].strip()[:2] in ("- ", "* ", "+ "):
-                        items.append(f"<li>{inline(lines[i].strip()[2:])}</li>")
-                        i += 1
-                    out.append("<ul>" + "".join(items) + "</ul>")
-                    continue
-                if re.match(r"^\d+\.\s+", st):
-                    items = []
-                    while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
-                        body = re.sub(r"^\d+\.\s+", "", lines[i].strip())
-                        items.append(f"<li>{inline(body)}</li>")
-                        i += 1
-                    out.append("<ol>" + "".join(items) + "</ol>")
-                    continue
-                if st.startswith(">"):
-                    out.append(f"<blockquote>{inline(st.lstrip('>').strip())}</blockquote>")
-                    i += 1
-                    continue
-                # paragrafo normale: accorpa righe contigue
-                buf = []
-                while i < len(lines) and lines[i].strip() and not re.match(
-                        r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>)", lines[i].strip()):
-                    buf.append(inline(lines[i].strip()))
-                    i += 1
-                out.append("<p>" + "<br/>".join(buf) + "</p>")
+        def epub_image_html(alt, name):
+            # EN: XHTML 1.1 has no <figure>: a plain <div> + caption <p>.
+            # IT: XHTML 1.1 non ha <figure>: un semplice <div> + <p> didascalia.
+            cap = (f'<p style="text-align:center;font-style:italic;">'
+                   f'{esc(alt)}</p>' if alt.strip() else "")
+            return (f'<div style="text-align:center;">'
+                    f'<img src="images/{name}" alt="{esc(alt)}" '
+                    f'style="max-width:100%;"/></div>{cap}')
+
+        def md_to_html(text):
+            """EN: chapter Markdown -> XHTML body, via the shared converter.
+            IT: markdown del capitolo -> corpo XHTML, tramite il convertitore
+            condiviso."""
+            out = self._blocks_to_html(text, image_html=epub_image_html)
             return "\n".join(out) if out else "<p></p>"
 
         XHTML = ('<?xml version="1.0" encoding="utf-8"?>\n'
@@ -2750,7 +3218,8 @@ class Project:
         # (gnome-epub-thumbnailer, Calibre) richiedono un raster.
         if self.cover_image:
             cover_img_bytes = self.cover_image
-            cover_img_name = "cover.jpg" if self.cover_image_fmt == "jpeg" else "cover.png"
+            cover_ext = IMAGE_FORMATS.get(self.cover_image_fmt, ("png",))[0]
+            cover_img_name = f"cover.{cover_ext}"
             cover_img_mime = self._cover_image_mime()
         elif self.cover_is_blank():
             # campi Sezioni editoriali vuoti e nessuna immagine: copertina
@@ -2853,6 +3322,9 @@ class Project:
                f'media-type="{cover_img_mime}"/>\n'
                '<item id="cover-svg" href="cover.svg" '
                'media-type="image/svg+xml"/>\n'
+               + "".join(f'<item id="att{k}" href="images/{n}" '
+                         f'media-type="{self.image_mime(n)}"/>\n'
+                         for k, n in enumerate(used_imgs, 1))
                + "\n".join(manifest) +
                '\n</manifest>\n<spine toc="ncx">\n'
                + "\n".join(spine) +
@@ -2889,6 +3361,11 @@ class Project:
             z.writestr("OEBPS/" + cover_img_name, cover_img_bytes,
                        zipfile.ZIP_DEFLATED)
             z.writestr("OEBPS/cover.svg", cover_svg, zipfile.ZIP_DEFLATED)
+            # EN: attached chapter images (only the ones actually used).
+            # IT: immagini allegate ai capitoli (solo quelle davvero usate).
+            for n in used_imgs:
+                z.writestr("OEBPS/images/" + n, self.images[n],
+                           zipfile.ZIP_STORED)
             for (iid, fname, sec_title, body, in_toc) in sections:
                 z.writestr("OEBPS/" + fname,
                            XHTML.format(t=esc(sec_title), body=body),
@@ -3024,25 +3501,5 @@ class Project:
             if ch.is_cover:
                 return ch
         return None
-
-    def update_cover_date(self):
-        """Sostituisce l'ultima riga non vuota della copertina con la data odierna."""
-        import datetime
-        cover = self.cover()
-        if cover is None:
-            return None
-        oggi = datetime.date.today().strftime("%d/%m/%Y")
-        lines = cover.text.split("\n")
-        # trova l'indice dell'ultima riga non vuota
-        last = -1
-        for i, ln in enumerate(lines):
-            if ln.strip():
-                last = i
-        if last >= 0:
-            lines[last] = oggi
-        else:
-            lines = [oggi]
-        cover.text = "\n".join(lines)
-        return oggi
 
 
