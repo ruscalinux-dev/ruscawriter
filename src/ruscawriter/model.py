@@ -44,12 +44,94 @@ import shutil
 import tarfile
 import tempfile
 
+# EN: optional hyphenation support via Pyphen. Two things are needed and both
+#     are OPTIONAL: (1) the Pyphen library (Debian "python3-pyphen") and (2) a
+#     hyphenation DICTIONARY for the language. The Debian package of Pyphen
+#     ships WITHOUT dictionaries and pulls them from the system "hyphen-*"
+#     packages (e.g. "hyphen-it", "hyphen-en-us") under /usr/share/hyphen/;
+#     the PyPI/pip package instead bundles its own. So on Debian/Ubuntu the
+#     user typically needs BOTH python3-pyphen AND a hyphen-<lang> package.
+#     When either is missing the PDF export still works: the "hyphenate"
+#     option is simply unavailable (the GUI disables it, see editor.py) and we
+#     never crash.
+# IT: supporto opzionale alla sillabazione tramite Pyphen. Servono due cose,
+#     entrambe OPZIONALI: (1) la libreria Pyphen (pacchetto Debian
+#     "python3-pyphen") e (2) un DIZIONARIO di sillabazione per la lingua. Il
+#     pacchetto Debian di Pyphen NON include i dizionari e li prende dai
+#     pacchetti di sistema "hyphen-*" (es. "hyphen-it", "hyphen-en-us") sotto
+#     /usr/share/hyphen/; il pacchetto PyPI/pip include invece i propri. Quindi
+#     su Debian/Ubuntu di norma servono SIA python3-pyphen SIA un pacchetto
+#     hyphen-<lingua>. Se manca l'uno o l'altro l'export PDF funziona lo
+#     stesso: l'opzione "sillaba" e' semplicemente non disponibile (la GUI la
+#     disattiva, vedi editor.py) e non falliamo mai.
+try:
+    import pyphen as _pyphen
+    HAVE_PYPHEN = True
+except Exception:
+    _pyphen = None
+    HAVE_PYPHEN = False
+
+# cache dei dizionari di sillabazione gia' creati, per lingua (crearli e' caro)
+_HYPHEN_DICTS = {}
+
+
+def get_hyphenator(lang="it"):
+    """EN: Return a cached Pyphen hyphenator for 'lang' (e.g. "it", "en_US"),
+    or None if Pyphen is missing OR no dictionary exists for the language (for
+    instance python3-pyphen installed without any hyphen-<lang> package).
+    Pyphen accepts both "it" and "it_IT"; we try progressively broader codes.
+    IT: Restituisce un sillabatore Pyphen (in cache) per 'lang' (es. "it",
+    "en_US"), oppure None se Pyphen manca OPPURE non esiste un dizionario per
+    quella lingua (per esempio python3-pyphen installato senza alcun pacchetto
+    hyphen-<lingua>). Pyphen accetta sia "it" sia "it_IT"; proviamo codici via
+    via piu' generici."""
+    if not HAVE_PYPHEN:
+        return None
+    key = lang or "it"
+    if key in _HYPHEN_DICTS:
+        return _HYPHEN_DICTS[key]
+    dic = None
+    for cand in (key, key.split("_")[0], key.split("-")[0]):
+        try:
+            dic = _pyphen.Pyphen(lang=cand)
+            break
+        except Exception:
+            dic = None
+    _HYPHEN_DICTS[key] = dic
+    return dic
+
+
+def hyphenation_available(lang="it"):
+    """EN: True only if hyphenation can actually be performed for 'lang' — i.e.
+    Pyphen is importable AND a dictionary for the language is present. This is
+    what the GUI should check to enable the "hyphenate" option, because having
+    python3-pyphen without a hyphen-<lang> dictionary is not enough.
+    IT: True solo se la sillabazione e' davvero eseguibile per 'lang' — cioe'
+    Pyphen e' importabile E c'e' un dizionario per la lingua. E' cio' che la
+    GUI deve controllare per abilitare l'opzione "sillaba", perche' avere
+    python3-pyphen senza un dizionario hyphen-<lingua> non basta."""
+    return get_hyphenator(lang) is not None
+
+
 # --- costanti applicative condivise -----------------------------------------
 APP_NAME = "RuscaWriter"
-APP_VERSION = "0.3 (2026-07-04)"
-# numero di versione "nudo" (senza data), per i punti in cui la data e' gia'
-# mostrata a parte, come la schermata Informazioni
-APP_VERSION_SHORT = "0.3"
+
+# ---------------------------------------------------------------------------
+# UNICA FONTE di versione e data / SINGLE SOURCE of version and date.
+# IT: per rilasciare una nuova versione basta cambiare le DUE righe qui sotto.
+#     Tutto il resto — il titolo della finestra, il dialogo Informazioni, il
+#     pacchetto .deb, la man page — ne deriva, e non va toccato a mano.
+# EN: to cut a new release, change ONLY the two lines below. Everything else —
+#     the window title, the About screen, the .deb package, the man page —
+#     derives from them and must not be edited by hand.
+# ---------------------------------------------------------------------------
+APP_VERSION_SHORT = "0.99"
+APP_RELEASE_DATE = (2026, 8, 13)         # (anno, mese, giorno) / (year, month, day)
+# ---------------------------------------------------------------------------
+
+# data in forma ISO e versione completa: calcolate, mai scritte a mano
+APP_DATE_ISO = "%04d-%02d-%02d" % APP_RELEASE_DATE
+APP_VERSION = "%s (%s)" % (APP_VERSION_SHORT, APP_DATE_ISO)
 APP_AUTHOR = "Nunzio Curcuruto"
 
 # Campi strutturati del frontespizio e del colophon. L'ordine e' anche l'ordine
@@ -173,7 +255,6 @@ def _parse_cmap_unicode(data, cmap_off):
     """Estrae una mappa {codepoint Unicode -> glyph id} da una tabella cmap.
     Supporta i formati 4 (BMP) e 12 (full Unicode), i piu' comuni. Restituisce
     un dict, eventualmente vuoto se nessuna sottotabella e' utilizzabile."""
-    import struct
     mapping = {}
     try:
         ntab = struct.unpack(">H", data[cmap_off+2:cmap_off+4])[0]
@@ -228,6 +309,134 @@ def _parse_cmap_unicode(data, cmap_off):
     return mapping
 
 
+# ---------------------------------------------------------------------------
+# EN: SYSTEM FONTS.
+#     RuscaWriter ships two fonts — a typewriter one for the writing area and a
+#     reading serif for the exports — and they stay the default. But a person
+#     writing a book may well own the face they want, so the fonts installed on
+#     the machine are offered too.
+#
+#     Only TrueType (.ttf) families are listed: the PDF writer embeds glyph
+#     outlines as TrueType, so an OpenType/CFF face could be shown on screen
+#     but not put inside the PDF — better not to offer what cannot be honoured.
+#
+# IT: FONT DI SISTEMA.
+#     RuscaWriter porta con se' due font — uno da macchina da scrivere per
+#     l'area di scrittura e un serif da lettura per gli export — e restano i
+#     predefiniti. Ma chi scrive un libro puo' benissimo avere gia' il
+#     carattere che vuole, quindi si offrono anche i font installati sulla
+#     macchina.
+#
+#     Si elencano SOLO le famiglie TrueType (.ttf): l'impaginatore PDF
+#     incorpora i contorni dei glifi in formato TrueType, quindi un font
+#     OpenType/CFF si vedrebbe a schermo ma non finirebbe nel PDF. Meglio non
+#     offrire cio' che non si puo' mantenere.
+# ---------------------------------------------------------------------------
+
+# Cartelle in cui i sistemi tipo Unix tengono i font.
+SYSTEM_FONT_DIRS = (
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    os.path.expanduser("~/.local/share/fonts"),
+    os.path.expanduser("~/.fonts"),
+)
+
+# Come si chiamano i quattro stili nella tabella 'name' di un TTF.
+_TTF_SUBFAMILY_TO_STYLE = {
+    "regular": "regular", "book": "regular", "roman": "regular",
+    "bold": "bold",
+    "italic": "italic", "oblique": "italic",
+    "bold italic": "bolditalic", "bolditalic": "bolditalic",
+    "bold oblique": "bolditalic",
+}
+
+
+def read_ttf_names(path):
+    """Nome della famiglia e dello stile di un file TTF, o (None, None).
+
+    Legge SOLO l'intestazione e la tabella dei nomi, con due letture mirate:
+    scorrere centinaia di font di sistema caricandoli interi sarebbe lento
+    senza motivo."""
+    try:
+        with open(path, "rb") as f:
+            testa = f.read(12)
+            if len(testa) < 12 or testa[:4] not in (b"\x00\x01\x00\x00", b"true"):
+                return (None, None)     # non e' un TrueType (potrebbe essere CFF)
+            n_tab = struct.unpack(">H", testa[4:6])[0]
+            elenco = f.read(16 * n_tab)
+            offset = lunghezza = None
+            for i in range(n_tab):
+                voce = elenco[i * 16:(i + 1) * 16]
+                if voce[:4] == b"name":
+                    offset, lunghezza = struct.unpack(">II", voce[8:16])
+                    break
+            if offset is None:
+                return (None, None)
+            f.seek(offset)
+            tabella = f.read(lunghezza)
+
+        conteggio, area = struct.unpack(">HH", tabella[2:6])
+        famiglia = stile = None
+        for i in range(conteggio):
+            rec = tabella[6 + i * 12:18 + i * 12]
+            if len(rec) < 12:
+                break
+            plat, enc, _lang, nome_id, lung, off = struct.unpack(">HHHHHH", rec)
+            if nome_id not in (1, 2):
+                continue
+            grezzo = tabella[area + off:area + off + lung]
+            try:
+                if plat == 3 or (plat == 0):        # Windows/Unicode: UTF-16BE
+                    testo = grezzo.decode("utf-16-be", "ignore")
+                else:                                # Macintosh: latin-1
+                    testo = grezzo.decode("latin-1", "ignore")
+            except Exception:
+                continue
+            testo = testo.strip()
+            if not testo:
+                continue
+            if nome_id == 1 and famiglia is None:
+                famiglia = testo
+            elif nome_id == 2 and stile is None:
+                stile = testo
+        return (famiglia, stile)
+    except Exception:
+        return (None, None)
+
+
+def system_font_families(dirs=None):
+    """Famiglie TrueType installate sulla macchina.
+
+    Restituisce {nome_famiglia: {stile: percorso}}, con stile fra 'regular',
+    'bold', 'italic' e 'bolditalic'. Sono incluse solo le famiglie che hanno
+    almeno il tondo: senza quello non si puo' impaginare niente.
+    """
+    trovate = {}
+    for cartella in (dirs if dirs is not None else SYSTEM_FONT_DIRS):
+        if not os.path.isdir(cartella):
+            continue
+        for radice, _sub, files in os.walk(cartella):
+            for nome_file in files:
+                if not nome_file.lower().endswith(".ttf"):
+                    continue
+                percorso = os.path.join(radice, nome_file)
+                famiglia, sottofamiglia = read_ttf_names(percorso)
+                if not famiglia:
+                    continue
+                stile = _TTF_SUBFAMILY_TO_STYLE.get(
+                    (sottofamiglia or "regular").strip().lower())
+                if stile is None:
+                    continue
+                trovate.setdefault(famiglia, {}).setdefault(stile, percorso)
+    return {fam: stili for fam, stili in trovate.items() if "regular" in stili}
+
+
+def font_files_for_family(famiglia, dirs=None):
+    """Percorsi dei file di una famiglia di sistema, per stile. Dizionario
+    vuoto se la famiglia non c'e' o non ha il tondo."""
+    return system_font_families(dirs).get(famiglia, {})
+
+
 def read_ttf_metrics(path):
     """Legge le metriche essenziali di un TTF (solo libreria standard).
     Restituisce un dict con i dati per incorporarlo in un PDF, oppure None.
@@ -237,7 +446,6 @@ def read_ttf_metrics(path):
     l'impaginazione del PDF e l'array /Widths usano la larghezza reale di ogni
     glifo invece di una larghezza fissa (che andrebbe bene solo per i
     monospace). 'advance1000' resta come ripiego."""
-    import struct
     try:
         with open(path, "rb") as f:
             data = f.read()
@@ -374,95 +582,441 @@ def _winansi_to_unicode(code):
         return code
 
 
-def _parse_inline_md(text):
-    """Spezza il testo in segmenti (testo, stile) interpretando il markdown
-    inline. stile in {'regular','bold','italic','bolditalic'}.
-    Gestisce **grassetto**, *corsivo*, ***entrambi***, __..__, _.._, `codice`,
-    e link [testo](url) -> testo."""
-    import re
-    # prima normalizza i link in solo testo
-    text = re.sub(r"\[(.+?)\]\((.+?)\)", r"\1", text)
-    # token: ***  ** * ___ __ _ `  (in ordine di lunghezza per il match)
-    pattern = re.compile(r"(\*\*\*|___|\*\*|__|\*|_|`)")
-    bold = False
-    italic = False
-    code = False
-    segments = []
-    buf = []
+# ---------------------------------------------------------------------------
+# EN: THE MARKDOWN RULES, IN ONE PLACE.
+#     Every part of the program that reads Markdown — the PDF typesetter, the
+#     HTML and EPUB exports, the ODT and DOCX exports, the on-screen preview
+#     and the live highlighting in the editor — asks these two functions:
+#
+#       classify_md_line(line)  what kind of line is this? (block level)
+#       parse_inline(text)      where are bold, italic and code? (inline level)
+#
+#     Before, each of those six places carried its own copy of the rules, and
+#     the copies had drifted apart: "#Title" without a space was a heading in
+#     the PDF and a paragraph everywhere else, and "_italic_" was formatted on
+#     export but not highlighted while typing. One source, one behaviour.
+#
+# IT: LE REGOLE DEL MARKDOWN, IN UN POSTO SOLO.
+#     Ogni parte del programma che legge Markdown — l'impaginatore PDF, gli
+#     export HTML ed EPUB, quelli ODT e DOCX, l'anteprima e l'evidenziazione
+#     dal vivo nell'editor — interroga queste due funzioni:
+#
+#       classify_md_line(riga)  che tipo di riga e'? (livello blocco)
+#       parse_inline(testo)     dove sono grassetto, corsivo e codice? (inline)
+#
+#     Prima ognuno di quei sei punti aveva la sua copia delle regole, e le
+#     copie erano divergute: "#Titolo" senza spazio era un titolo nel PDF e un
+#     paragrafo altrove, e "_corsivo_" veniva formattato in esportazione ma non
+#     evidenziato mentre si scrive. Una fonte, un comportamento.
+# ---------------------------------------------------------------------------
 
-    def flush():
-        if buf:
-            if code:
-                style = "regular"   # il codice resta a larghezza fissa, regolare
-            elif bold and italic:
-                style = "bolditalic"
-            elif bold:
-                style = "bold"
-            elif italic:
-                style = "italic"
-            else:
-                style = "regular"
-            segments.append(("".join(buf), style))
-            buf.clear()
+# Marcatori inline. Ogni alternativa richiede la coppia (apertura e chiusura):
+# un asterisco solitario, come in "3 * 4", resta un asterisco e non fa
+# scivolare in corsivo tutto il resto della riga.
+_INLINE_RE = re.compile(
+    r"(?P<bi>\*\*\*|___)(?P<bi_t>.+?)(?P=bi)"
+    r"|(?P<b>\*\*|__)(?P<b_t>.+?)(?P=b)"
+    r"|(?P<i>\*|_)(?P<i_t>.+?)(?P=i)"
+    r"|`(?P<c_t>.+?)`"
+)
 
+# Link markdown [testo](indirizzo): del testo resta solo la parte leggibile.
+_LINK_RE = re.compile(r"\[(.+?)\]\((.+?)\)")
+
+# Regole di blocco: una riga per volta.
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_NUMBER_RE = re.compile(r"^(\d+)\.\s+(.*)$")
+_BULLET_PREFIXES = ("- ", "* ", "+ ")
+
+# Stili inline possibili. 'code' e' un caso a se': dentro i backtick il testo
+# resta letterale, senza altra formattazione.
+INLINE_STYLES = ("regular", "bold", "italic", "bolditalic", "code")
+
+
+def _style_name(bold, italic):
+    if bold and italic:
+        return "bolditalic"
+    if bold:
+        return "bold"
+    if italic:
+        return "italic"
+    return "regular"
+
+
+def _inline_tokens(s, bold=False, italic=False):
+    """Percorre una stringa e produce i tratti formattati come (stile, testo),
+    senza marcatori. La formattazione annidata funziona
+    ("**grassetto con *corsivo* dentro**") perche' la funzione richiama se
+    stessa sul contenuto."""
     pos = 0
-    for mtok in pattern.finditer(text):
-        buf.append(text[pos:mtok.start()])
-        tok = mtok.group(1)
-        pos = mtok.end()
-        if tok == "`":
-            flush(); code = not code
-        elif tok in ("***", "___"):
-            flush(); bold = not bold; italic = not italic
-        elif tok in ("**", "__"):
-            flush(); bold = not bold
-        elif tok in ("*", "_"):
-            flush(); italic = not italic
-    buf.append(text[pos:])
-    flush()
-    if not segments:
-        segments = [("", "regular")]
-    return segments
+    for m in _INLINE_RE.finditer(s):
+        if m.start() > pos:
+            yield (_style_name(bold, italic), s[pos:m.start()])
+        if m.group("bi_t") is not None:
+            yield from _inline_tokens(m.group("bi_t"), True, True)
+        elif m.group("b_t") is not None:
+            yield from _inline_tokens(m.group("b_t"), True, italic)
+        elif m.group("i_t") is not None:
+            yield from _inline_tokens(m.group("i_t"), bold, True)
+        else:
+            # codice: contenuto letterale, nessuna ricorsione
+            yield ("code", m.group("c_t"))
+        pos = m.end()
+    if pos < len(s):
+        yield (_style_name(bold, italic), s[pos:])
+
+
+def link_display(etichetta, indirizzo):
+    """Come si scrive un link in un libro: l'etichetta, poi l'indirizzo fra
+    parentesi.
+
+    NIENTE LINK CLICCABILI, e l'indirizzo SEMPRE IN CHIARO. Sono due facce
+    della stessa scelta. Un link cliccabile puo' portare altrove da quel che
+    l'etichetta promette, e in un documento che gira non e' un rischio da
+    regalare a chi legge. Ma soprattutto: un libro si stampa, e su una pagina
+    di carta nessuno clicca — se l'indirizzo non e' scritto, la fonte citata
+    non e' raggiungibile. Prima veniva buttato via in silenzio.
+
+    Se etichetta e indirizzo dicono gia' la stessa cosa non si ripete nulla.
+    """
+    etichetta = (etichetta or "").strip()
+    indirizzo = (indirizzo or "").strip()
+    if not indirizzo:
+        return etichetta
+    if not etichetta:
+        return indirizzo
+    # "vedi https://x.it" o "[https://x.it](https://x.it)": non raddoppiare
+    nudo = indirizzo.split("://", 1)[-1].rstrip("/")
+    if etichetta.rstrip("/").endswith(nudo) or nudo.endswith(etichetta.rstrip("/")):
+        return etichetta
+    return f"{etichetta} ({indirizzo})"
+
+
+def parse_inline(text):
+    """Spezza il testo in segmenti (testo, stile), stile in INLINE_STYLES.
+
+    I link [testo](indirizzo) diventano "testo (indirizzo)": vedi
+    link_display. Restituisce sempre almeno un segmento, così chi impagina non
+    deve gestire la lista vuota."""
+    text = _LINK_RE.sub(lambda m: link_display(m.group(1), m.group(2)), text)
+    segments = [(t, st) for st, t in _inline_tokens(text) if t]
+    return segments or [("", "regular")]
+
+
+def inline_spans(text, base=0, bold=False, italic=False):
+    """Posizioni dei tratti formattati nella riga così com'è scritta, marcatori
+    compresi: (inizio, fine, stile).
+
+    Serve all'evidenziazione nell'editor, che colora il testo sul posto e
+    quindi ha bisogno delle posizioni vere, delimitatori inclusi: chi scrive
+    "**forte**" si aspetta di vedere evidenziati anche gli asterischi. Un
+    tratto annidato produce una voce propria, con lo stile combinato: chi
+    colora sovrappone le due e ottiene, ad esempio, grassetto-corsivo."""
+    spans = []
+    for m in _INLINE_RE.finditer(text):
+        if m.group("bi_t") is not None:
+            inner, opener, nb, ni = m.group("bi_t"), m.group("bi"), True, True
+        elif m.group("b_t") is not None:
+            inner, opener, nb, ni = m.group("b_t"), m.group("b"), True, italic
+        elif m.group("i_t") is not None:
+            inner, opener, nb, ni = m.group("i_t"), m.group("i"), bold, True
+        else:
+            # codice: nessun annidamento da esplorare
+            spans.append((base + m.start(), base + m.end(), "code"))
+            continue
+        spans.append((base + m.start(), base + m.end(), _style_name(nb, ni)))
+        spans.extend(inline_spans(inner, base + m.start() + len(opener), nb, ni))
+    return spans
+
+
+def _parse_inline_md(text):
+    """Come parse_inline, ma il codice viene reso in tondo: l'impaginatore PDF
+    conosce solo tondo, grassetto, corsivo e grassetto-corsivo."""
+    return [(t, "regular" if st == "code" else st) for t, st in parse_inline(text)]
 
 
 def _strip_inline_md(text):
     """Restituisce il solo testo senza i marcatori inline markdown."""
-    return "".join(seg for seg, _ in _parse_inline_md(text))
+    return "".join(seg for seg, _ in parse_inline(text))
+
+
+def classify_md_line(raw_line):
+    """Riconosce il tipo di una riga di Markdown.
+
+    Restituisce (tipo, corpo, extra):
+
+        ("blank",   "",          None)      riga vuota
+        ("image",   didascalia,  nome)      ![didascalia](nome)
+        ("heading", testo,       livello)   # ... ###### (lo spazio e' d'obbligo)
+        ("bullet",  testo,       None)      - * +
+        ("number",  testo,       "3")       3. testo
+        ("quote",   testo,       None)      > testo
+        ("text",    testo,       None)      tutto il resto
+
+    Lo spazio dopo il cancelletto e' richiesto, come vuole il Markdown
+    standard: senza, "#3 note a piè di pagina" diventerebbe un titolo.
+    """
+    s = raw_line.strip()
+    if not s:
+        return ("blank", "", None)
+    mi = _IMG_LINE_RE.match(s)
+    if mi:
+        return ("image", mi.group("alt"), mi.group("src"))
+    m = _HEADING_RE.match(s)
+    if m:
+        return ("heading", m.group(2), len(m.group(1)))
+    if s[:2] in _BULLET_PREFIXES:
+        return ("bullet", s[2:], None)
+    m = _NUMBER_RE.match(s)
+    if m:
+        return ("number", m.group(2), m.group(1))
+    if s.startswith(">"):
+        return ("quote", s.lstrip(">").strip(), None)
+    return ("text", s, None)
+
+
+# EN/IT: the two machine-written lines Project Gutenberg wraps every book in.
+# They are generated, not written, so matching them exactly is safe: no book
+# opens a paragraph with three asterisks and that sentence.
+# Le due righe scritte a macchina con cui Project Gutenberg avvolge ogni libro.
+# Sono generate, non scritte: riconoscerle alla lettera e' sicuro, nessun libro
+# comincia un paragrafo con tre asterischi e quella frase.
+_PG_START_RE = re.compile(
+    r"^\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK\b.*$", re.I)
+_PG_END_RE = re.compile(
+    r"^\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK\b.*$", re.I)
+
+
+def strip_gutenberg_boilerplate(text):
+    """Toglie l'intestazione e la licenza che Project Gutenberg aggiunge a ogni
+    libro, lasciando solo l'opera.
+
+    In un file tipico sono un'intestazione di una ventina di righe e una
+    licenza finale di trecento: circa un decimo delle parole, che altrimenti
+    finirebbero nel manoscritto e da li' nel PDF e nell'EPUB.
+
+    Si taglia solo fra i due marcatori, e solo se ci sono entrambi e
+    nell'ordine giusto: se il file non e' di Gutenberg, o e' stato modificato,
+    il testo torna indietro intatto. Meglio non tagliare che tagliare a
+    sproposito.
+    """
+    lines = (text or "").split("\n")
+    start = end = None
+    for i, line in enumerate(lines):
+        if start is None and _PG_START_RE.match(line.strip()):
+            start = i
+        elif start is not None and _PG_END_RE.match(line.strip()):
+            end = i
+            break
+    if start is None or end is None or end <= start + 1:
+        return text
+    return "\n".join(lines[start + 1:end]).strip("\n")
+
+
+# ---------------------------------------------------------------------------
+# EN: RE-JOINING HARD-WRAPPED PARAGRAPHS ON IMPORT.
+#     Most literary .txt files — Project Gutenberg's above all — are wrapped by
+#     hand at a fixed column, with a blank line between paragraphs. Taken
+#     literally, every one of those newlines is a line break, so the text comes
+#     out of the PDF unjustified and refuses to reflow on an e-reader.
+#     The file is not at fault: that layout is the norm, and the importer has
+#     to recognise it.
+#
+#     The decision is made one paragraph at a time, never on the whole file,
+#     because a book can hold both prose and verse. A run of lines that are all
+#     nearly as long as the longest was wrapped by a machine and gets rejoined;
+#     a run of short, uneven lines is poetry and is left exactly as it is.
+#
+# IT: RICUCIRE I PARAGRAFI SPEZZATI ALL'IMPORTAZIONE.
+#     Quasi tutti i .txt letterari — quelli di Project Gutenberg per primi —
+#     hanno le righe spezzate a mano a una colonna fissa e i paragrafi separati
+#     da una riga vuota. Presi alla lettera, quei ritorni a capo sono
+#     interruzioni di riga: il testo esce dal PDF non giustificato e su un
+#     e-reader non si riadatta. Non e' colpa del file: quel formato e' la
+#     norma, ed e' l'importatore che deve saperlo leggere.
+#
+#     La decisione si prende un paragrafo per volta, mai sul file intero,
+#     perche' un libro puo' contenere prosa e versi insieme. Un gruppo di righe
+#     lunghe quasi quanto la piu' lunga e' stato spezzato a macchina e viene
+#     ricucito; un gruppo di righe corte e irregolari e' poesia e resta com'e'.
+# ---------------------------------------------------------------------------
+
+# Sotto questa larghezza non si parla di spezzatura automatica: nessuno manda
+# a capo a colonna 30. I .txt in circolazione vanno dalle 60 alle 80 colonne.
+_WRAP_MIN_WIDTH = 50
+# Quanto devono essere uniformi le righe: la piu' corta almeno il 60% della
+# piu' lunga. La prosa spezzata a macchina sta ampiamente sopra; i versi no.
+_WRAP_MIN_RATIO = 0.6
+
+
+def _looks_machine_wrapped(lengths):
+    """Vero se queste lunghezze di riga sembrano prodotte da una spezzatura
+    automatica a colonna fissa, non da scelte di chi scrive."""
+    if not lengths:
+        return False
+    width = max(lengths)
+    if width < _WRAP_MIN_WIDTH:
+        return False
+    return min(lengths) >= width * _WRAP_MIN_RATIO
+
+
+def wrapped_runs(text):
+    """Trova i paragrafi spezzati a colonna fissa, senza modificare niente.
+
+    Restituisce una lista di coppie (prima_riga, ultima_riga), indici a base
+    zero ed estremi inclusi: sono esattamente i gruppi di righe che
+    unwrap_hard_breaks ricucirebbe.
+
+    Esiste perche' vedere e correggere devono seguire la STESSA regola:
+    l'editor evidenzia queste righe e il comando "Ricuci i paragrafi" unisce
+    queste righe. Se la regola cambia, cambiano insieme.
+    """
+    lines = (text or "").split("\n")
+    runs = []
+    start = None
+    explicit = False
+    for i, raw in enumerate(lines):
+        if classify_md_line(raw)[0] == "text":
+            if start is None:
+                start, explicit = i, False
+            stripped = raw.rstrip("\n")
+            if stripped.endswith("  ") or stripped.rstrip().endswith("\\"):
+                explicit = True
+        else:
+            if start is not None:
+                runs.append((start, i - 1, explicit))
+            start = None
+    if start is not None:
+        runs.append((start, len(lines) - 1, explicit))
+
+    out = []
+    for a, b, has_explicit in runs:
+        if b <= a or has_explicit:
+            continue
+        # si guardano tutte le righe tranne l'ultima: e' l'unica che puo'
+        # essere piu' corta senza che questo dica niente sulla spezzatura
+        if _looks_machine_wrapped([len(lines[i].rstrip()) for i in range(a, b)]):
+            out.append((a, b))
+    return out
+
+
+def unwrap_hard_breaks(text):
+    """Ricuce i paragrafi spezzati a colonna fissa, lasciando intatto il resto.
+
+    Non tocca mai: righe vuote, titoli, elenchi, citazioni, immagini (li
+    riconosce con classify_md_line), i gruppi di righe corte o irregolari, e i
+    paragrafi in cui compare un'interruzione esplicita del Markdown (riga che
+    finisce con due spazi o con una barra rovesciata) — li' l'intenzione di chi
+    scrive e' dichiarata e va rispettata.
+
+    Quali paragrafi ricucire lo decide wrapped_runs: la stessa funzione che
+    l'editor usa per evidenziarli.
+    """
+    lines = (text or "").split("\n")
+    fino_a = dict(wrapped_runs(text))       # prima riga -> ultima riga
+    out = []
+    i = 0
+    while i < len(lines):
+        if i in fino_a:
+            ultima = fino_a[i]
+            out.append(" ".join(ln.strip() for ln in lines[i:ultima + 1]))
+            i = ultima + 1
+        else:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out)
+
+
+_HEADING_SCALE = {1: 1.6, 2: 1.4, 3: 1.25, 4: 1.15, 5: 1.07, 6: 1.0}
 
 
 def parse_md_line(raw_line, base_size):
     """Interpreta una riga markdown per il PDF. Restituisce
     (segments, dimensione_font, rientro_punti, spazio_extra_sotto, force_style)
-    dove segments e' una lista di (testo, stile)."""
-    stripped = raw_line.strip()
-    if not stripped:
+    dove segments e' una lista di (testo, stile).
+
+    Il riconoscimento della riga arriva da classify_md_line: qui restano solo
+    le scelte tipografiche, che sono l'unica cosa specifica del PDF."""
+    kind, body, extra = classify_md_line(raw_line)
+    if kind == "blank":
         return ([("", "regular")], base_size, 0.0, 0.0, None)
-    # intestazioni: # .. ######  (rese in grassetto, dimensione crescente)
-    if stripped.startswith("#"):
-        level = len(stripped) - len(stripped.lstrip("#"))
-        level = max(1, min(level, 6))
-        heading = stripped.lstrip("#").strip()
-        factor = {1: 1.6, 2: 1.4, 3: 1.25, 4: 1.15, 5: 1.07, 6: 1.0}[level]
-        return ([(_strip_inline_md(heading), "bold")],
-                base_size * factor, 0.0, base_size * 0.4, "bold")
-    # liste puntate: -, *, +
-    if stripped[:2] in ("- ", "* ", "+ "):
-        segs = [("\u2022 ", "regular")] + _parse_inline_md(stripped[2:])
+    if kind == "heading":
+        return ([(_strip_inline_md(body), "bold")],
+                base_size * _HEADING_SCALE[extra], 0.0, base_size * 0.4, "bold")
+    if kind == "bullet":
+        segs = [("\u2022 ", "regular")] + _parse_inline_md(body)
         return (segs, base_size, base_size * 1.2, 0.0, None)
-    # liste numerate: "1. testo"
-    import re
-    mnum = re.match(r"^(\d+)\.\s+(.*)$", stripped)
-    if mnum:
-        segs = [(f"{mnum.group(1)}. ", "regular")] + _parse_inline_md(mnum.group(2))
+    if kind == "number":
+        segs = [(f"{extra}. ", "regular")] + _parse_inline_md(body)
         return (segs, base_size, base_size * 1.2, 0.0, None)
-    # citazione: > testo (resa in corsivo)
-    if stripped.startswith(">"):
-        body = stripped.lstrip(">").strip()
+    if kind == "quote":
         segs = [(seg, "italic" if st == "regular" else st)
                 for seg, st in _parse_inline_md(body)]
         return (segs, base_size, base_size * 1.2, 0.0, None)
-    # riga normale
+    # riga normale (comprese le righe immagine, che l'impaginatore intercetta
+    # prima di arrivare qui): si conserva il rientro originale
     return (_parse_inline_md(raw_line), base_size, 0.0, 0.0, None)
+
+
+def fit_cover_title(parole, max_w, misura, start=13.5, floor=2.0,
+                    max_lines=4, step=0.94):
+    """Sceglie il corpo del titolo di copertina e la sua andata a capo.
+
+    LE PAROLE NON SI SPEZZANO. Se una parola non ci sta, non la si taglia a
+    meta': si rimpicciolisce il corpo finche' entra intera. Spezzare
+    "INTRODUZIONE" in "INTRODUZ / IONE" e' un errore tipografico, non un
+    ripiego accettabile.
+
+    parole : le parole del titolo, gia' in maiuscolo
+    max_w  : larghezza disponibile
+    misura : funzione (testo, corpo) -> larghezza, spaziatura fra le lettere
+             compresa. Passandola da fuori questa funzione non ha bisogno di
+             font ne' di immagini, e si puo' verificare da sola.
+
+    Restituisce (corpo, righe). Solo per un titolo assurdo — una parola sola
+    piu' larga della copertina anche al corpo minimo — si arriva a spezzare,
+    come ultima difesa perche' nulla esca dai bordi.
+    """
+    parole = [p for p in parole if p]
+    if not parole:
+        return (start, [])
+
+    def manda_a_capo(corpo, spezza):
+        righe, cur = [], ""
+        for parola in parole:
+            prova = (cur + " " + parola).strip()
+            if misura(prova, corpo) <= max_w:
+                cur = prova
+                continue
+            if cur:
+                righe.append(cur)
+                cur = ""
+            if not spezza or misura(parola, corpo) <= max_w:
+                cur = parola
+                continue
+            pezzo = ""
+            for ch in parola:
+                if not pezzo or misura(pezzo + ch, corpo) <= max_w:
+                    pezzo += ch
+                else:
+                    righe.append(pezzo)
+                    pezzo = ch
+            cur = pezzo
+        if cur:
+            righe.append(cur)
+        return righe
+
+    corpo = start
+    while True:
+        intere = all(misura(p, corpo) <= max_w for p in parole)
+        righe = manda_a_capo(corpo, spezza=False)
+        if (intere and len(righe) <= max_lines) or corpo <= floor:
+            break
+        corpo *= step
+    if not intere:
+        # titolo impossibile: solo qui si spezza, per non debordare
+        righe = manda_a_capo(corpo, spezza=True)
+    return (corpo, righe)
 
 
 def _cover_graphics_ops(page_w, page_h):
@@ -521,6 +1075,245 @@ IMAGE_FORMATS = {
     "jpeg": ("jpg",  "image/jpeg"),
     "webp": ("webp", "image/webp"),
 }
+
+
+# --- generatore di copertine ------------------------------------------------
+# EN: Formats offered by the cover generator, in centimetres. The keys match
+#     PDF_PAGE_SIZES so a generated cover can follow the book's page size.
+# IT: Formati offerti dal generatore di copertine, in centimetri. Le chiavi
+#     coincidono con PDF_PAGE_SIZES cosi' la copertina generata puo' seguire
+#     il formato pagina del libro.
+COVER_FORMATS = {
+    "A5":    {"w_cm": 14.8, "h_cm": 21.0},
+    "6x9":   {"w_cm": 15.2, "h_cm": 22.9},
+    "17x24": {"w_cm": 17.0, "h_cm": 24.0},
+    "A4":    {"w_cm": 21.0, "h_cm": 29.7},
+    "5x8":   {"w_cm": 12.7, "h_cm": 20.3},
+}
+COVER_DEFAULT_FORMAT = "A5"
+
+# EN/IT: palette proposta dal generatore / palette offered by the generator
+COVER_COLORS = [
+    "#c98274", "#8d9e7e", "#7d8ba3", "#c4a94f", "#a2705f", "#6f6f78",
+    "#d9c9a8", "#3f4a3c", "#8e5b6e", "#2e3440", "#e0ded6", "#b3462f",
+]
+COVER_DEFAULT_COLOR = "#c98274"
+COVER_TEXT_COLORS = ["#111111", "#ffffff"]
+
+# EN: preview vs final resolution (dots per inch). The preview stays small so
+#     the GUI redraws instantly; the final image is print-quality.
+# IT: risoluzione di anteprima e finale (punti per pollice). L'anteprima resta
+#     piccola cosi' la GUI si ridisegna all'istante; l'immagine finale e' di
+#     qualita' di stampa.
+COVER_PREVIEW_DPI = 96
+COVER_EXPORT_DPI = 300
+
+
+def cover_generator_available():
+    """EN: True if a cover can be generated. Drawing the text requires Pillow,
+    so without it the generator is offered as unavailable (attaching a
+    ready-made image keeps working).
+    IT: True se e' possibile generare una copertina. Disegnare il testo
+    richiede Pillow, quindi senza di esso il generatore risulta non disponibile
+    (allegare un'immagine gia' pronta continua a funzionare)."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _hex_to_rgb(value, fallback=(201, 130, 116)):
+    """EN/IT: '#rrggbb' (o '#rgb') -> (r, g, b); fallback se non valido."""
+    s = (value or "").strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    if len(s) != 6:
+        return fallback
+    try:
+        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except Exception:
+        return fallback
+
+
+def render_cover_image(fmt_key=COVER_DEFAULT_FORMAT, dpi=COVER_EXPORT_DPI,
+                       bg_color=COVER_DEFAULT_COLOR, text_color="#111111",
+                       author="", title="", publisher="",
+                       image_bytes=None, out_format="png", font_dir=None):
+    """EN: Draw a book cover and return the image bytes (PNG by default).
+
+    The layout follows a classic typographic scheme: a coloured ground, a
+    double rule frame, the author in tracked capitals at the top, a picture
+    box in the middle (cropped like CSS 'object-fit: cover'), the title in
+    large capitals and the publisher at the foot under a short ornamental
+    rule. Every measure is proportional to the cover width, so the result is
+    identical at preview resolution and at print resolution.
+
+    font_dir : folder holding the bundled EB Garamond .ttf files (the caller
+    passes assets/, so this module keeps needing no path logic of its own).
+
+    Returns None if Pillow is missing (see cover_generator_available()).
+
+    IT: Disegna una copertina e restituisce i byte dell'immagine (PNG per
+    impostazione predefinita).
+
+    L'impaginazione segue uno schema tipografico classico: fondo colorato,
+    cornice a doppio filetto, autore in maiuscoletto spaziato in alto,
+    riquadro per l'immagine al centro (ritagliata come 'object-fit: cover'
+    del CSS), titolo in maiuscole grandi ed editore in basso sotto un breve
+    filetto ornamentale. Ogni misura e' proporzionale alla larghezza, cosi' il
+    risultato e' identico in anteprima e in stampa.
+
+    Restituisce None se Pillow non c'e' (vedi cover_generator_available())."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception:
+        return None
+
+    spec = COVER_FORMATS.get(fmt_key) or COVER_FORMATS[COVER_DEFAULT_FORMAT]
+    W = max(1, int(round(spec["w_cm"] / 2.54 * dpi)))
+    H = max(1, int(round(spec["h_cm"] / 2.54 * dpi)))
+
+    bg_rgb = _hex_to_rgb(bg_color)
+    txt_rgb = _hex_to_rgb(text_color, (17, 17, 17))
+    # filetti dello stesso colore del testo (bianchi su fondo scuro)
+    rule_rgb = (255, 255, 255) if sum(txt_rgb) > 380 else (0, 0, 0)
+
+    img = Image.new("RGB", (W, H), bg_rgb)
+    d = ImageDraw.Draw(img)
+
+    # unita' proporzionale: 1% della larghezza (il "cqw" dei CSS container)
+    cqw = W / 100.0
+
+    def _font(filename, size_px):
+        """Carica un font del progetto; ripiega sul font di sistema."""
+        try:
+            path = os.path.join(font_dir, filename) if font_dir else filename
+            return ImageFont.truetype(path, max(1, int(round(size_px))))
+        except Exception:
+            try:
+                return ImageFont.load_default(max(1, int(round(size_px))))
+            except Exception:
+                return ImageFont.load_default()
+
+    def _tracked(text_s, y, fnt, tracking, cx, fill):
+        """Testo centrato con spaziatura tra le lettere (letter-spacing)."""
+        if not text_s:
+            return
+        widths = [d.textlength(ch, font=fnt) for ch in text_s]
+        total = sum(widths) + tracking * max(0, len(text_s) - 1)
+        x = cx - total / 2.0
+        for ch, w in zip(text_s, widths):
+            d.text((x, y), ch, font=fnt, fill=fill)
+            x += w + tracking
+
+    # --- cornice a doppio filetto ---
+    pad = 0.042 * W
+    thick = max(1, int(round(0.42 * cqw)))
+    thin = max(1, int(round(0.16 * cqw)))
+    gap = 1.5 * cqw
+    fx0, fy0, fx1, fy1 = pad, pad, W - pad, H - pad
+    d.rectangle([fx0, fy0, fx1, fy1], outline=rule_rgb, width=thick)
+    d.rectangle([fx0 + gap, fy0 + gap, fx1 - gap, fy1 - gap],
+                outline=rule_rgb, width=thin)
+
+    # --- area di testo interna ---
+    inner_w = fx1 - fx0
+    ix0 = fx0 + 0.065 * inner_w
+    ix1 = fx1 - 0.065 * inner_w
+    iy0 = fy0 + 0.060 * inner_w
+    iy1 = fy1 - 0.055 * inner_w
+    cx = (ix0 + ix1) / 2.0
+    inner_h = iy1 - iy0
+
+    # --- autore, in alto ---
+    a_size = 4.0 * cqw
+    fa = _font("EBGaramond-Regular.ttf", a_size)
+    _tracked((author or "").upper(), iy0, fa, 0.18 * a_size, cx, txt_rgb)
+    a_asc, a_desc = fa.getmetrics()
+    author_bottom = iy0 + (a_asc + a_desc) * 1.2
+
+    # --- editore, in basso, con filetto ornamentale ---
+    e_size = 3.0 * cqw
+    fe = _font("EBGaramond-Regular.ttf", e_size)
+    e_asc, e_desc = fe.getmetrics()
+    e_y = iy1 - (e_asc + e_desc) * 1.2
+    _tracked((publisher or "").upper(), e_y, fe, 0.22 * e_size, cx, txt_rgb)
+    rule_y = e_y - 0.035 * inner_h
+    rule_half = 0.07 * (ix1 - ix0)
+    if publisher:
+        d.line([cx - rule_half, rule_y, cx + rule_half, rule_y],
+               fill=rule_rgb, width=thin)
+
+    # --- titolo: il corpo si MISURA, non si indovina --------------------------
+    # Prima il corpo si sceglieva contando i caratteri: una parola sola e lunga
+    # usciva dai bordi. La decisione sta ora in fit_cover_title, che scende di
+    # corpo finche' ogni parola ci sta INTERA — le parole non si spezzano.
+    t_text = (title or "").upper()
+    max_w = ix1 - ix0
+
+    def _misura(testo, corpo):
+        """Larghezza reale del testo come lo disegna _tracked: la spaziatura
+        fra le lettere va contata, o la misura mente."""
+        if not testo:
+            return 0.0
+        fnt = _font("EBGaramond-Bold.ttf", corpo * cqw)
+        tracking = 0.03 * corpo * cqw
+        return (sum(d.textlength(ch, font=fnt) for ch in testo)
+                + tracking * max(0, len(testo) - 1))
+
+    corpo, lines = fit_cover_title(t_text.split(), max_w, _misura)
+    t_size = corpo * cqw
+    ft = _font("EBGaramond-Bold.ttf", t_size)
+
+    line_h = t_size * 1.02
+    title_top = rule_y - 0.025 * inner_h - line_h * len(lines)
+    for i, ln in enumerate(lines):
+        _tracked(ln, title_top + i * line_h, ft, 0.03 * t_size, cx, txt_rgb)
+
+    # --- riquadro dell'immagine, tra autore e titolo ---
+    box_top = int(round(author_bottom + 0.045 * inner_h))
+    box_bottom = int(round(title_top - 0.045 * inner_h))
+    bx0, bx1 = int(round(ix0)), int(round(ix1))
+    if box_bottom > box_top and bx1 > bx0:
+        bw, bh = bx1 - bx0, box_bottom - box_top
+        placed = False
+        if image_bytes:
+            try:
+                src = Image.open(io.BytesIO(image_bytes))
+                if src.mode != "RGB":
+                    src = src.convert("RGB")
+                # ritaglio "cover": riempie il riquadro senza deformare
+                src_ratio = src.width / max(1, src.height)
+                box_ratio = bw / max(1, bh)
+                if src_ratio > box_ratio:
+                    nw = int(src.height * box_ratio)
+                    left = max(0, (src.width - nw) // 2)
+                    src = src.crop((left, 0, left + nw, src.height))
+                else:
+                    nh = int(src.width / max(0.0001, box_ratio))
+                    top = max(0, (src.height - nh) // 2)
+                    src = src.crop((0, top, src.width, top + nh))
+                src = src.resize((bw, bh), Image.LANCZOS)
+                img.paste(src, (bx0, box_top))
+                placed = True
+            except Exception:
+                placed = False
+        if not placed:
+            # velo chiaro come segnaposto (CSS rgba(255,255,255,.22))
+            base = img.crop((bx0, box_top, bx1, box_bottom))
+            veil = Image.new("RGB", (bw, bh), (255, 255, 255))
+            img.paste(Image.blend(base, veil, 0.22), (bx0, box_top))
+
+    out = io.BytesIO()
+    fmt = (out_format or "png").lower()
+    if fmt in ("jpg", "jpeg"):
+        img.save(out, format="JPEG", quality=95)
+    elif fmt == "webp":
+        img.save(out, format="WEBP", quality=95)
+    else:
+        img.save(out, format="PNG")
+    return out.getvalue()
 
 
 def image_format(data):
@@ -656,7 +1449,7 @@ _IMG_LINE_RE = re.compile(r"^!\[(?P<alt>.*?)\]\((?P<src>[^)\s]+)\)\s*$")
 
 
 def write_pdf(path, chapters, title="",
-              cover_paragraphs=None,
+              cover_paragraphs=None, cover_roles=None,
               chapter_titles=None, toc_label="Indice",
               font_size=12, leading=16,
               page_w=595.0, page_h=842.0,   # A4 in punti
@@ -669,7 +1462,10 @@ def write_pdf(path, chapters, title="",
               chapter_images=None,
               frontispiece_paragraphs=None,
               colophon_paragraphs=None,
-              blank_cover=False):
+              blank_cover=False,
+              justify=False,
+              hyphenate=False,
+              hyphen_lang="it"):
     """
     EN: Write a PDF using only the standard library, with basic Markdown.
       chapters : list of chapters; each chapter = list of paragraphs (str).
@@ -680,6 +1476,16 @@ def write_pdf(path, chapters, title="",
       chapter_images : dict {internal_name: (jpeg_bytes, width, height)} of
                     the attached chapter images, already converted to JPEG;
                     a text line like ![caption](name) places the image.
+      justify   : when True, body paragraphs are justified to the text width
+                    (extra space is spread evenly between words); the LAST
+                    line of each paragraph, headings and centered material stay
+                    flush-left / centered as before.
+      hyphenate : when True AND Pyphen is available, over-long words are broken
+                    with a hyphen at a valid syllable point so justification
+                    looks tidier and fewer words are stretched. Silently
+                    ignored if Pyphen is missing.
+      hyphen_lang : language code for the hyphenation dictionary (e.g. "it",
+                    "en_US"); ignored when hyphenate is False.
     IT: Scrive un PDF usando solo la libreria standard, con markdown di base.
       chapters : lista di capitoli; ogni capitolo = lista di paragrafi (str).
       cover_paragraphs : pagina copertina iniziale (senza numero).
@@ -704,6 +1510,57 @@ def write_pdf(path, chapters, title="",
 
     def seg_w(s, size):
         return _text_width(s, size, adv, widths_map)
+
+    # --- sillabazione (opzionale) ------------------------------------------
+    # EN: the hyphenator is created only if requested AND Pyphen is present;
+    #     otherwise it stays None and no word is ever broken with a hyphen.
+    # IT: il sillabatore si crea solo se richiesto E Pyphen c'e'; altrimenti
+    #     resta None e nessuna parola viene mai spezzata con un trattino.
+    hyphenator = get_hyphenator(hyphen_lang) if hyphenate else None
+
+    def _hyphenate_token(tok, style, size, first_max, next_max):
+        """EN: Try to split an over-long word so its first piece fits in
+        'first_max' points; the remainder is returned to be re-wrapped. Returns
+        a list of (text, style) pieces where every piece but the last ends in a
+        soft hyphen "-". If no valid split fits, returns [(tok, style)] intact.
+        IT: Prova a spezzare una parola troppo lunga cosi' che il primo pezzo
+        entri in 'first_max' punti; il resto viene restituito per essere
+        re-impaginato. Restituisce una lista di pezzi (testo, stile) dove ogni
+        pezzo tranne l'ultimo finisce con un trattino "-". Se nessuna divisione
+        valida entra, restituisce [(tok, style)] intatto."""
+        if hyphenator is None or len(tok) < 5:
+            return [(tok, style)]
+        # Pyphen.positions() da' gli indici di sillaba validi (crescenti).
+        try:
+            positions = hyphenator.positions(tok)
+        except Exception:
+            positions = []
+        if not positions:
+            return [(tok, style)]
+        pieces = []
+        rest = tok
+        offset = 0
+        avail = first_max
+        while True:
+            # posizioni valide relative a 'rest'
+            rel = [p - offset for p in positions if 0 < p - offset < len(rest)]
+            chosen = None
+            for cut in reversed(rel):        # dal taglio piu' lungo che entra
+                head = rest[:cut] + "-"
+                if seg_w(head, size) <= avail:
+                    chosen = cut
+                    break
+            if chosen is None:
+                pieces.append((rest, style))
+                break
+            pieces.append((rest[:chosen] + "-", style))
+            rest = rest[chosen:]
+            offset += chosen
+            avail = next_max
+            if seg_w(rest, size) <= avail:
+                pieces.append((rest, style))
+                break
+        return pieces
 
     # --- margini: interno (rilegatura) ed esterno (taglio) -----------------
     # Se non specificati, ripiegano sul margine uniforme 'margin', cosi' il
@@ -739,7 +1596,13 @@ def write_pdf(path, chapters, title="",
 
     def wrap_segments(segments, size, maxw):
         """Manda a capo una sequenza di run (testo,stile) entro maxw.
-        Restituisce una lista di righe, ciascuna lista di run."""
+        Restituisce una lista di righe, ciascuna lista di run.
+
+        Se il sillabatore e' attivo, una parola che non entra nello spazio
+        rimasto sulla riga corrente viene spezzata con un trattino nel punto
+        di sillaba piu' conveniente, invece di essere mandata tutta a capo:
+        cosi' le righe si riempiono meglio e la giustificazione risulta piu'
+        uniforme (meno spazi dilatati)."""
         lines = []
         cur = []
         cur_w = 0.0
@@ -751,12 +1614,39 @@ def write_pdf(path, chapters, title="",
                     continue
                 w = seg_w(tok, size)
                 if cur_w + w > maxw and cur:
-                    # a capo
+                    if tok.strip() == "":
+                        # lo spazio finisce la riga: a capo, senza riportarlo
+                        lines.append(cur)
+                        cur = []
+                        cur_w = 0.0
+                        continue
+                    # la parola non entra nello spazio rimasto: prova a
+                    # sillabarla in modo che un pezzo stia su questa riga.
+                    if hyphenator is not None:
+                        pieces = _hyphenate_token(
+                            tok, style, size, maxw - cur_w, maxw)
+                        if len(pieces) > 1:
+                            head = pieces[0]
+                            cur.append(head)
+                            lines.append(cur)
+                            cur = []
+                            cur_w = 0.0
+                            # i pezzi restanti (l'ultimo senza trattino) vanno
+                            # sulle righe successive, ricontrollando la
+                            # larghezza uno per uno
+                            for pc_text, pc_style in pieces[1:]:
+                                pw = seg_w(pc_text, size)
+                                if cur_w + pw > maxw and cur:
+                                    lines.append(cur)
+                                    cur = []
+                                    cur_w = 0.0
+                                cur.append((pc_text, pc_style))
+                                cur_w += pw
+                            continue
+                    # niente sillabazione: mando la parola intera a capo
                     lines.append(cur)
                     cur = []
                     cur_w = 0.0
-                    if tok.strip() == "":
-                        continue   # non iniziare una riga con spazi
                 cur.append((tok, style))
                 cur_w += w
         if cur:
@@ -814,7 +1704,6 @@ def write_pdf(path, chapters, title="",
                 block_h += font_size * 0.8   # spazio prima dell'autore
         # parti un po' sopra il centro, per un'aria piu' "da libro"
         yy = page_h * 0.66 + block_h / 2.0
-        prev_role = None
         for t, r in top:
             sz = size_of(r)
             if r == "author":
@@ -824,7 +1713,6 @@ def write_pdf(path, chapters, title="",
             yy = _emit_centered(rows, sz, style, yy, sz * 1.4)
             if r == "title":
                 yy -= font_size * 0.6
-            prev_role = r
         # meta in fondo pagina
         if meta:
             my = margin + meta_sz * 1.6 * len(meta)
@@ -906,11 +1794,24 @@ def write_pdf(path, chapters, title="",
             out.append(cur)
             return out
 
-        if raw_lines:
+        # I ruoli arrivano dal progetto (cover_lines_with_roles): titolo,
+        # sottotitolo, autore, editore. Non si deducono dalla posizione, o con
+        # due sole righe la stessa finirebbe stampata due volte.
+        if cover_roles and len(cover_roles) == len(raw_lines):
+            title_line = next((t for t, r in zip(raw_lines, cover_roles)
+                               if r == "title"), "")
+            middle = [t for t, r in zip(raw_lines, cover_roles)
+                      if r in ("subtitle", "author")]
+            date_line = next((t for t, r in zip(raw_lines, cover_roles)
+                              if r == "publisher"), "")
+            raw_lines = [x for x in ([title_line] + middle + [date_line]) if x]
+        elif raw_lines:
+            # ripiego per chi chiama write_pdf senza ruoli
             title_line = raw_lines[0]
-            date_line = raw_lines[-1] if len(raw_lines) > 1 else ""
-            middle = raw_lines[1:-1] if len(raw_lines) > 2 else (
-                raw_lines[1:] if len(raw_lines) == 2 else [])
+            date_line = raw_lines[-1] if len(raw_lines) > 2 else ""
+            middle = raw_lines[1:-1] if len(raw_lines) > 2 else raw_lines[1:]
+
+        if raw_lines:
 
             # TITOLO: centrato nella fascia tra i due filetti (0.585 e 0.375),
             # quindi attorno a ~0.48 dell'altezza pagina.
@@ -936,7 +1837,6 @@ def write_pdf(path, chapters, title="",
 
         flush_page("cover")
 
-    import re
     # 1a) frontespizio (dopo la copertina, prima dell'indice)
     if frontispiece_paragraphs:
         add_front_page(frontispiece_paragraphs)
@@ -1003,11 +1903,21 @@ def write_pdf(path, chapters, title="",
                 segments, sz, indent, extra, _force = parse_md_line(raw_line, font_size)
                 line_leading = leading * (sz / font_size)
                 avail = usable_w - indent
-                for run_line in wrap_segments(segments, sz, avail):
+                # EN: the LAST wrapped line of a paragraph line is never
+                #     justified (it would look stretched); headings (_force ==
+                #     "bold") are never justified either.
+                # IT: l'ULTIMA riga spezzata di una riga-paragrafo non si
+                #     giustifica mai (apparirebbe dilatata); nemmeno le
+                #     intestazioni (_force == "bold") si giustificano.
+                wrapped = wrap_segments(segments, sz, avail)
+                can_justify = justify and _force != "bold"
+                for li, run_line in enumerate(wrapped):
                     if y < bottom_y:
                         flush_page()
                         pages_so_far += 1
-                    cur_lines.append((left_margin + indent, y, run_line, sz))
+                    is_last = (li == len(wrapped) - 1)
+                    jw = avail if (can_justify and not is_last) else None
+                    cur_lines.append((left_margin + indent, y, run_line, sz, jw))
                     y -= line_leading
                 if extra:
                     y -= extra
@@ -1017,6 +1927,11 @@ def write_pdf(path, chapters, title="",
 
     chapter_pages = pages        # le pagine dei capitoli appena impaginate
     pages = pages_before_chapters
+    # Posizione in cui finira' l'indice stampato, da segnare ORA: 'pages' e
+    # 'pages_before_chapters' sono da qui in poi la stessa lista, quindi
+    # misurarla dopo aver impaginato l'indice restituirebbe la pagina
+    # sbagliata.
+    toc_page_index = len(pages)
 
     # Intestazione di pagina (running header): ogni pagina di capitolo mostra il
     # TITOLO DEL CAPITOLO a cui appartiene, non il titolo del progetto. La pagina
@@ -1065,6 +1980,26 @@ def write_pdf(path, chapters, title="",
                 flush_page("plain")
                 yy = content_top_y
         flush_page("plain")
+
+    # EN: bookmarks (the PDF outline) need the ABSOLUTE position of each
+    #     chapter's first page inside the final page list — not the visible
+    #     page number, which skips cover, index and colophon. We record it here,
+    #     the one moment when both halves of the list are known.
+    # IT: i segnalibri (l'indice di navigazione del PDF) vogliono la posizione
+    #     ASSOLUTA della prima pagina di ogni capitolo nell'elenco finale, non
+    #     il numero di pagina visibile, che salta copertina, indice e colophon.
+    #     La registriamo qui, l'unico momento in cui si conoscono entrambe le
+    #     meta' dell'elenco.
+    outline_entries = []           # (titolo, indice assoluto di pagina)
+    if chapter_titles:
+        # la pagina dell'indice stampato e' la prima dopo copertina e
+        # frontespizio: ci si mette un segnalibro, e' li' che si torna
+        outline_entries.append((toc_label, toc_page_index))
+    chapter_pages_offset = len(pages)
+    for ci3, ct in enumerate(chapter_titles or []):
+        if ci3 < len(chapter_start_page):
+            outline_entries.append(
+                (ct, chapter_pages_offset + chapter_start_page[ci3] - 1))
 
     # ora accodiamo le pagine dei capitoli (gia' impaginate sopra)
     pages.extend(chapter_pages)
@@ -1239,7 +2174,40 @@ def write_pdf(path, chapters, title="",
         parts.append(b"BT")
         cur_fid = None
         cur_size = None
-        for (x, ly, runs, sz) in text_lines:
+        cur_tw = 0.0   # word-spacing (Tw) attivo; 0 = normale (allineato a sx)
+        for entry in text_lines:
+            # EN: body lines may carry a 5th item, the justify target width
+            #     (float) or None. Older 4-item lines (headings, centered,
+            #     covers) are left flush as before.
+            # IT: le righe di corpo possono portare un 5° elemento, la
+            #     larghezza-obiettivo per la giustificazione (float) o None. Le
+            #     righe a 4 elementi (intestazioni, centrate, copertine)
+            #     restano allineate come prima.
+            if len(entry) >= 5:
+                x, ly, runs, sz, jw = entry[0], entry[1], entry[2], entry[3], entry[4]
+            else:
+                x, ly, runs, sz = entry
+                jw = None
+            # EN: compute word-spacing so the line reaches the target width:
+            #     extra = target - natural, spread over the space characters.
+            # IT: calcola lo spazio-parola perche' la riga raggiunga la
+            #     larghezza-obiettivo: extra = obiettivo - naturale, diviso tra
+            #     i caratteri di spazio.
+            tw = 0.0
+            if jw:
+                natural = sum(seg_w(t, sz) for (t, _s) in runs if t)
+                n_spaces = sum(t.count(" ") for (t, _s) in runs if t)
+                if n_spaces > 0 and natural < jw:
+                    extra = jw - natural
+                    tw = extra / n_spaces
+                    # non dilatare oltre misura: se servisse piu' di ~1 en per
+                    # spazio la riga e' troppo corta (parole lunghissime),
+                    # meglio lasciarla allineata a sinistra.
+                    if tw > sz * 0.9:
+                        tw = 0.0
+            if tw != cur_tw:
+                parts.append(f"{tw:.3f} Tw".encode("latin-1"))
+                cur_tw = tw
             parts.append(f"1 0 0 1 {x + page_shift:.2f} {ly:.2f} Tm".encode("latin-1"))
             for (text, style) in runs:
                 if text == "":
@@ -1249,6 +2217,10 @@ def write_pdf(path, chapters, title="",
                     parts.append(f"/{fid} {sz:.1f} Tf".encode("latin-1"))
                     cur_fid, cur_size = fid, sz
                 parts.append(b"(" + _pdf_escape_bytes(_to_winansi(text)) + b") Tj")
+        # ripristina lo spazio-parola normale prima di intestazione/numero
+        if cur_tw != 0.0:
+            parts.append(b"0 Tw")
+            cur_tw = 0.0
         if kind is None:
             visible_number += 1
             head_txt = title
@@ -1295,8 +2267,44 @@ def write_pdf(path, chapters, title="",
     objects[pages_obj_id - 1] = (
         f"<< /Type /Pages /Count {total} /Kids [{kids}] >>".encode("latin-1"))
 
+    # EN: the outline — the clickable chapter tree in the reader's sidebar.
+    #     Each item is an object pointing at a page; the items form a doubly
+    #     linked list (/Prev, /Next) hanging off a single /Outlines root.
+    #     Object ids must be known before the bodies are written, so we reserve
+    #     empty slots first and fill them in afterwards.
+    # IT: l'indice di navigazione: l'albero dei capitoli su cui si fa clic
+    #     nella barra laterale del lettore. Ogni voce e' un oggetto che punta a
+    #     una pagina; le voci formano una lista doppiamente concatenata
+    #     (/Prev, /Next) appesa a un'unica radice /Outlines. Gli id degli
+    #     oggetti servono prima dei contenuti, quindi si prenotano le caselle
+    #     vuote e si riempiono dopo.
+    voci = [(t, i) for t, i in outline_entries if 0 <= i < len(page_obj_ids)]
+    outlines_id = None
+    if voci:
+        outlines_id = add_obj(None)
+        voce_ids = [add_obj(None) for _ in voci]
+        for k, (titolo, page_index) in enumerate(voci):
+            pid = page_obj_ids[page_index]
+            prev = f"/Prev {voce_ids[k - 1]} 0 R " if k > 0 else ""
+            nxt = f"/Next {voce_ids[k + 1]} 0 R " if k < len(voci) - 1 else ""
+            # /XYZ 0 altezza 0 = apri la pagina in cima, senza cambiare lo zoom
+            objects[voce_ids[k] - 1] = (
+                b"<< /Title ("
+                + _pdf_escape_bytes(_to_winansi(titolo))
+                + f") /Parent {outlines_id} 0 R {prev}{nxt}"
+                  f"/Dest [{pid} 0 R /XYZ 0 {page_h:.0f} 0] >>".encode("latin-1"))
+        objects[outlines_id - 1] = (
+            f"<< /Type /Outlines /First {voce_ids[0]} 0 R "
+            f"/Last {voce_ids[-1]} 0 R /Count {len(voce_ids)} >>").encode("latin-1")
+
+    # /PageMode /UseOutlines chiede al lettore di aprire subito il pannello dei
+    # segnalibri: senza, molti visualizzatori li tengono nascosti e sembra che
+    # non ci siano.
+    extra_cat = (f"/Outlines {outlines_id} 0 R /PageMode /UseOutlines "
+                 if outlines_id else "")
     catalog_id = add_obj(
-        f"<< /Type /Catalog /Pages {pages_obj_id} 0 R >>".encode("latin-1"))
+        (f"<< /Type /Catalog /Pages {pages_obj_id} 0 R "
+         f"{extra_cat}>>").encode("latin-1"))
 
     # 3) serializza con tabella xref
     out = bytearray()
@@ -1320,10 +2328,20 @@ def write_pdf(path, chapters, title="",
         f.write(out)
 
 
-# ---- Colori (color prugna / plum) -------------------------------------------
-# --- palette del tema ------------------------------------------------------
+# ---- Colori: le due famiglie di tema ----------------------------------------
+# L'interfaccia ha DUE famiglie di colori, ognuna con la sua versione chiara e
+# la sua versione scura (quattro combinazioni in tutto):
+#
+#   "rusca"    — la famiglia prugna, abbinata alla distribuzione RuscaLinux.
+#                E' il tema predefinito.
+#   "standard" — famiglia neutra e classica (grafite, lino, blu ardesia),
+#                ispirata all'abbinamento cromatico di Scrivener, per chi
+#                preferisce un aspetto piu' sobrio e tradizionale.
+#
 # NB: "PLUM" qui e' il COLORE prugna ("plum" in inglese), il tema cromatico
-# dell'applicazione — non un residuo del vecchio nome del programma.
+# storico dell'applicazione — non un residuo del vecchio nome del programma.
+
+# --- famiglia prugna (tema "rusca") ------------------------------------------
 PLUM        = "#8E4585"   # prugna
 PLUM_DARK   = "#5C2A55"   # prugna scuro (nomi file e note)
 PLUM_LIGHT  = "#D9B8D4"   # prugna chiaro per le sfumature
@@ -1335,46 +2353,555 @@ PLUM_PANEL  = "#3A1A35"   # pannelli laterali nel tema dark
 PLUM_INK    = "#241420"   # area di scrittura quasi nera, tono prugna
 PLUM_GLOW   = "#E0A8D8"   # prugna chiaro luminoso per accenti su scuro
 PAPER       = "#F7F2F5"   # testo principale su sfondo scuro (bianco caldo)
+PLUM_CODE   = "#7A3B72"   # prugna media per il codice nel tema chiaro
+
+# --- "Ametista": il prugna di RuscaLinux, rivisto per la vista ---------------
+# Le fasce restano prugna piene: sono l'identita' della distribuzione e vanno
+# tenute. Ma l'identita' sta nelle cornici, non nella pagina — e la pagina e'
+# dove si guarda per ore. Prima erano nero pieno su bianco pieno, 21:1, il
+# valore che affatica di piu': ora la carta ha un soffio di prugna e
+# l'inchiostro e' grafite violacea, 13,8:1.
+AMETISTA_HUES = {
+    "paper":        "#FAF6F9",   # carta con un soffio di prugna
+    "panel":        "#F1EAEF",   # pannelli
+    "ink":          "#2E252C",   # grafite violacea, mai nero pieno
+    "night":        "#20141D",   # notte prugna
+    "night_panel":  "#2A1826",   # pannelli nel tema scuro
+    "night_ink":    "#1B1017",   # area di scrittura scura
+    "parchment":    "#DCD2DA",   # testo sul fondo scuro, non bianco pieno
+    "accent":       PLUM,
+    "dark":         PLUM_DARK,
+    "light":        PLUM_LIGHT,
+    "glow":         PLUM_GLOW,
+    "code":         PLUM_CODE,
+    "wrap_light":   "#F3E9F1",
+    "wrap_dark":    "#2E1B2A",
+    "text":         PLUM_DARK,
+    # le fasce: qui il colore pieno resta, ed e' una scelta
+    "chrome_a":     PLUM,
+    "chrome_b":     PLUM_LIGHT,
+    "menubar_a":    PLUM,
+    "menubar_b":    PLUM_DARK,
+    "on_chrome":    WHITE,
+    "night_chrome_a":  PLUM_DARK,
+    "night_chrome_b":  "#20141D",
+    "night_menubar_a": PLUM,
+    "night_menubar_b": PLUM_DARK,
+    "night_on_chrome": WHITE,
+}
 
 
-def build_css(dark=False):
+# --- "Giada": verde salvia, la piu' riposante delle cinque ---------------------
+# Il criterio non e' il contrasto massimo, e' il contrasto GIUSTO. Nero puro su
+# bianco puro da' 21:1 e sembra la scelta piu' leggibile: non lo e'. Nel tema
+# chiaro il bianco pieno e' una sorgente luminosa puntata negli occhi; nel tema
+# scuro il bianco su nero produce alone, e le lettere sbordano sul fondo per
+# chiunque abbia un po' di astigmatismo. La fascia buona per il corpo del testo
+# sta fra 12:1 e 14:1, e i valori qui sotto ci stanno dentro.
+PAPER_WHITE    = "#FAF8F4"   # carta: avorio appena accennato, non bianco pieno
+CREAM_PANEL    = "#F0ECE4"   # pannelli: un gradino sotto la carta
+INK            = "#2B2A28"   # inchiostro: grafite, mai nero pieno
+NIGHT_WARM     = "#1B1D1C"   # fondo scuro: quasi nero, non nero
+NIGHT_PANEL    = "#23262A"   # pannelli nel tema scuro
+NIGHT_INK      = "#171918"   # area di scrittura scura
+PARCHMENT      = "#D6D3CC"   # testo su fondo scuro: circa l'85% del bianco
+
+# L'accento tende al verde perche' l'occhio mette a fuoco il centro dello
+# spettro con il minimo sforzo: il blu saturo diffonde e sfoca i bordi, il
+# rosso va a fuoco dietro la retina. Ma conta di piu' QUANTO POCO si usa: la
+# selezione, i filetti, i pulsanti. Le fasce restano neutre, perche' un colore
+# pieno su grandi superfici stanca qualunque tinta sia.
+GIADA_HUES = {
+    "accent":     "#3A6455",   # salvia: selezione e pulsanti
+    "dark":       "#2C4C41",   # salvia profonda
+    "light":      "#D7E4DD",   # verde polvere: sfumature
+    "glow":       "#8FC4AE",   # salvia luminosa: accenti su fondo scuro
+    "code":       "#3F6657",   # verde bosco: codice nel tema chiaro
+    "wrap_light": "#EBF1ED",   # velo verde: paragrafi spezzati, tema chiaro
+    "wrap_dark":  "#22302B",   # velo verde: paragrafi spezzati, tema scuro
+    "text":       "#33574A",   # titoli, nomi dei capitoli, barra di stato
+    # le fasce dell'interfaccia: neutre, con il testo scuro sopra
+    "chrome_a":   "#F0ECE4",
+    "chrome_b":   "#FAF8F4",
+    "menubar_a":  "#F0ECE4",
+    "menubar_b":  "#E6E1D8",
+    "on_chrome":  "#2B2A28",
+    # nel tema scuro le fasce sono grafite e il testo torna chiaro
+    "night_chrome_a":  "#23262A",
+    "night_chrome_b":  "#1B1D1C",
+    "night_menubar_a": "#23262A",
+    "night_menubar_b": "#191B1A",
+    "night_on_chrome": "#D6D3CC",
+}
+
+
+# --- "Rubino": rosso profondo su carta con un velo rosato -------------------
+RUBINO_HUES = {
+    "paper":        "#FBF6F5", "panel":       "#F2E9E7",
+    "ink":          "#2E2523",
+    "night":        "#1E1516", "night_panel": "#2A1E1F",
+    "night_ink":    "#191112", "parchment":   "#DED2D0",
+    "accent":       "#8E3636", "dark":        "#6B2727",
+    "light":        "#EBD4D2", "glow":        "#E8A6A0",
+    "code":         "#7E3030",
+    "wrap_light":   "#F6EAE8", "wrap_dark":   "#2C1E1F",
+    "text":         "#6B2727",
+    "chrome_a":     "#F2E9E7", "chrome_b":    "#FBF6F5",
+    "menubar_a":    "#F2E9E7", "menubar_b":   "#E8DAD7",
+    "on_chrome":    "#2E2523",
+    "night_chrome_a":  "#2A1E1F", "night_chrome_b":  "#1E1516",
+    "night_menubar_a": "#2A1E1F", "night_menubar_b": "#1A1213",
+    "night_on_chrome": "#DED2D0",
+}
+
+# --- "Zaffiro": blu profondo, l'accento tenuto basso di saturazione ---------
+# Il blu e' il colore che l'occhio mette a fuoco peggio: diffonde e sfoca i
+# bordi. Per questo qui l'accento e' desaturato e resta sulla sola selezione,
+# mentre le fasce restano neutre. E' il piu' delicato dei cinque, e va trattato
+# con piu' prudenza degli altri, non con meno.
+ZAFFIRO_HUES = {
+    "paper":        "#F8F9FC", "panel":       "#ECEEF4",
+    "ink":          "#262A33",
+    "night":        "#141821", "night_panel": "#1D222D",
+    "night_ink":    "#11141B", "parchment":   "#D2D7E0",
+    "accent":       "#2E4F7E", "dark":        "#213A5E",
+    "light":        "#D3DEEC", "glow":        "#9FBEE4",
+    "code":         "#2B4A75",
+    "wrap_light":   "#EDF1F7", "wrap_dark":   "#1C2331",
+    "text":         "#213A5E",
+    "chrome_a":     "#ECEEF4", "chrome_b":    "#F8F9FC",
+    "menubar_a":    "#ECEEF4", "menubar_b":   "#DFE3EC",
+    "on_chrome":    "#262A33",
+    "night_chrome_a":  "#1D222D", "night_chrome_b":  "#141821",
+    "night_menubar_a": "#1D222D", "night_menubar_b": "#12161E",
+    "night_on_chrome": "#D2D7E0",
+}
+
+# --- "Ambra": miele e ottone, la piu' calda delle cinque ---------------------
+AMBRA_HUES = {
+    "paper":        "#FBF7EE", "panel":       "#F2EBDD",
+    "ink":          "#2E2820",
+    "night":        "#1E1A14", "night_panel": "#2A251C",
+    "night_ink":    "#191612", "parchment":   "#DCD4C4",
+    "accent":       "#7C5A20", "dark":        "#5C4216",
+    "light":        "#EDDFC2", "glow":        "#E0BC7A",
+    "code":         "#6E501C",
+    "wrap_light":   "#F7F0E0", "wrap_dark":   "#2C261A",
+    "text":         "#5C4216",
+    "chrome_a":     "#F2EBDD", "chrome_b":    "#FBF7EE",
+    "menubar_a":    "#F2EBDD", "menubar_b":   "#E8DEC9",
+    "on_chrome":    "#2E2820",
+    "night_chrome_a":  "#2A251C", "night_chrome_b":  "#1E1A14",
+    "night_menubar_a": "#2A251C", "night_menubar_b": "#1A1712",
+    "night_on_chrome": "#DCD4C4",
+}
+
+
+# Nomi delle famiglie. Il valore salvato nelle impostazioni ("theme_family") e'
+# una di queste stringhe: qualunque altro valore ripiega sul predefinito.
+USER_THEME_PREFIX  = "utente:"   # codice dei temi letti da disco
+# Cinque gemme, cinque tavolozze. Cambia la pietra, non il criterio: nessun
+# bianco pieno, nessun nero pieno, il corpo del testo fra 12:1 e 14:1.
+THEME_AMETISTA = "ametista"   # prugna, il tema di RuscaLinux
+THEME_RUBINO   = "rubino"     # rosso profondo
+THEME_ZAFFIRO  = "zaffiro"    # blu, desaturato di proposito
+THEME_GIADA    = "giada"      # verde salvia
+THEME_AMBRA    = "ambra"      # miele e ottone
+BUILTIN_THEMES = (THEME_AMETISTA, THEME_RUBINO, THEME_ZAFFIRO,
+                  THEME_GIADA, THEME_AMBRA)
+# nomi storici, tenuti perche' il codice esterno continui a funzionare
+THEME_RUSCA, THEME_STANDARD, THEME_VELLUTO = (
+    THEME_AMETISTA, THEME_GIADA, THEME_AMBRA)
+# THEMES cresce a runtime con i temi trovati nella cartella dell'utente.
+THEMES = BUILTIN_THEMES
+DEFAULT_THEME = THEME_RUSCA
+
+# Vecchi codici non piu' esistenti: chi li aveva salvati non deve ritrovarsi
+# spedito al tema predefinito senza spiegazione.
+THEME_ALIASES = {
+    "standard_blue": THEME_GIADA,
+    "standard_red":  THEME_GIADA,
+    "rusca":         THEME_AMETISTA,
+    "standard":      THEME_GIADA,
+    "velluto":       THEME_AMBRA,
+    "lapislazzuli":  THEME_ZAFFIRO,   # era mezzanotte e ottone: il blu resta
+}
+
+# Accento di ciascuna famiglia standard.
+STANDARD_HUES = {
+    THEME_AMETISTA: AMETISTA_HUES,
+    THEME_RUBINO:   RUBINO_HUES,
+    THEME_ZAFFIRO:  ZAFFIRO_HUES,
+    THEME_GIADA:    GIADA_HUES,
+    THEME_AMBRA:    AMBRA_HUES,
+}
+
+# I nomi delle gemme sono tradotti nelle lingue complete; le altre ripiegano
+# sull'inglese, come per ogni altra stringa.
+THEME_LABEL_KEYS = {
+    THEME_AMETISTA: "theme_ametista",
+    THEME_RUBINO:   "theme_rubino",
+    THEME_ZAFFIRO:  "theme_zaffiro",
+    THEME_GIADA:    "theme_giada",
+    THEME_AMBRA:    "theme_ambra",
+}
+
+# EN/IT: a coloured dot beside each name, so the menu shows the theme's colour
+# and not only its name. GTK menu labels are PLAIN TEXT — no markup, no per-item
+# colour — so the dot is a character, not a painted label: it is the only way to
+# get colour into a menu entry without replacing the menu with custom widgets.
+# The emoji palette is fixed, so these are the nearest hues, not the exact ones.
+# Un pallino colorato accanto a ogni nome, così il menu mostra il colore del
+# tema e non solo il suo nome. Le etichette dei menu GTK sono TESTO SEMPLICE —
+# niente markup, niente colore per singola voce — quindi il pallino e' un
+# carattere, non un'etichetta dipinta: e' l'unico modo di portare colore in una
+# voce di menu senza sostituire il menu con widget su misura. La tavolozza
+# delle emoji e' fissa, quindi sono le tinte piu' vicine, non quelle esatte.
+THEME_DOTS = {
+    THEME_AMETISTA: "\U0001F7E3",   # pallino viola
+    THEME_RUBINO:   "\U0001F534",   # pallino rosso
+    THEME_ZAFFIRO:  "\U0001F535",   # pallino blu
+    THEME_GIADA:    "\U0001F7E2",   # pallino verde
+    THEME_AMBRA:    "\U0001F7E0",   # pallino arancio
+}
+
+
+def theme_dot(theme):
+    """Pallino colorato di un tema, stringa vuota se non ne ha uno (i temi
+    scritti dagli utenti non ne hanno)."""
+    return THEME_DOTS.get(theme, "")
+THEME_LABEL_FALLBACK = {
+    THEME_AMETISTA: "Ametista",
+    THEME_RUBINO:   "Rubino",
+    THEME_ZAFFIRO:  "Zaffiro",
+    THEME_GIADA:    "Giada",
+    THEME_AMBRA:    "Ambra",
+}
+
+
+def resolve_theme(code):
+    """Traduce un codice di tema salvato nelle impostazioni in uno valido,
+    tenendo conto dei nomi vecchi. Ripiega sul predefinito se non esiste."""
+    code = THEME_ALIASES.get(code, code)
+    return code if code in THEMES else DEFAULT_THEME
+
+
+def _rgba(hex_color, alpha):
+    """Da #RRGGBB alla forma rgba() del CSS, per le superfici traslucide."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha:.2f})"
+
+
+def _standard_palette(hues, dark):
+    """Costruisce una tavolozza standard dai suoi soli colori d'accento.
+
+    I neutri (bianco caldo, crema, bruno notte) sono identici per tutte le
+    varianti: e' l'accento a distinguerle. Un tema nuovo vuol dire sette colori
+    e nient'altro — ed e' esattamente cio' che scrive chi si fa il suo tema
+    nella cartella themes/.
+    """
+    accent, accent_dark = hues["accent"], hues["dark"]
+    accent_light, glow = hues["light"], hues["glow"]
+    # Chiavi facoltative: un tema con accento CHIARO deve dire quale testo ci
+    # va sopra e di che colore sono i titoli, altrimenti valgono i valori che
+    # funzionano per un accento pieno — bianco sopra, accento scuro nei titoli.
+    on_accent = hues.get("on_accent", WHITE)
+    testo = hues.get("text", accent_dark)
+    # I NEUTRI — carta, pannelli, inchiostro, fondo notte — sono la meta' del
+    # carattere di un tema: un avorio caldo e un bianco freddo raccontano cose
+    # diverse. Un tema puo' indicarli; se tace valgono quelli di Quiete, che
+    # restano la scelta prudente per starci ore.
+    carta = hues.get("paper", PAPER_WHITE)
+    pannelli = hues.get("panel", CREAM_PANEL)
+    inchiostro = hues.get("ink", INK)
+    notte = hues.get("night", NIGHT_WARM)
+    notte_pann = hues.get("night_panel", NIGHT_PANEL)
+    notte_ink = hues.get("night_ink", NIGHT_INK)
+    chiaro_su_scuro = hues.get("parchment", PARCHMENT)
+    # Le FASCE dell'interfaccia (barra superiore, barra dei menu) sono un ruolo
+    # a parte dall'accento. Un tema puo' volerle neutre e tenere il colore per
+    # la sola selezione: un colore pieno steso su grandi superfici stanca
+    # qualunque tinta sia. Se il tema non dice nulla, valgono l'accento e il
+    # suo scuro, cioe' il comportamento di sempre.
+    if dark:
+        accent = hues.get("night_accent", accent)
+        accent_dark = hues.get("night_accent_dark", accent_dark)
+        chrome_a = hues.get("night_chrome_a", accent_dark)
+        chrome_b = hues.get("night_chrome_b", NIGHT_WARM)
+        menubar_a = hues.get("night_menubar_a", accent)
+        menubar_b = hues.get("night_menubar_b", accent_dark)
+        on_chrome = hues.get("night_on_chrome",
+                             hues.get("on_accent_dark", WHITE))
+        return dict(
+            accent=accent, accent_dark=accent_dark, accent_light=accent_light,
+            on_accent=hues.get("on_accent_dark", WHITE),
+            menubar_a=menubar_a, menubar_b=menubar_b, on_chrome=on_chrome,
+            bg_top=notte, bg_bottom=notte_pann,
+            header_a=chrome_a, header_b=chrome_b,
+            panel_bg=notte_pann,
+            list_text=glow,
+            editor_bg=notte_ink, editor_fg=chiaro_su_scuro,
+            notes_fg=chiaro_su_scuro,
+            title_fg=glow,
+            status_a=accent_dark, status_b=notte,
+            status_fg=glow,
+            findbar_bg="rgba(20,22,26,0.95)",
+            dialog_fg=chiaro_su_scuro,
+            entry_bg=notte_ink, entry_fg=chiaro_su_scuro,
+            head=glow, code=glow, marker=accent,
+            wrapmark=hues["wrap_dark"],
+        )
+    return dict(
+        accent=accent, accent_dark=accent_dark, accent_light=accent_light,
+        on_accent=on_accent,
+        menubar_a=hues.get("menubar_a", accent),
+        menubar_b=hues.get("menubar_b", accent_dark),
+        on_chrome=hues.get("on_chrome", on_accent),
+        bg_top=accent_light, bg_bottom=carta,
+        header_a=hues.get("chrome_a", accent),
+        header_b=hues.get("chrome_b", accent_light),
+        panel_bg=_rgba(pannelli, 0.90),
+        list_text=testo,
+        editor_bg=carta, editor_fg=inchiostro,
+        notes_fg=testo,
+        title_fg=testo,
+        status_a=accent_light, status_b=carta,
+        status_fg=testo,
+        findbar_bg=_rgba(carta, 0.92),
+        dialog_fg=inchiostro,
+        entry_bg=carta, entry_fg=inchiostro,
+        head=testo, code=hues["code"], marker=accent_light,
+        wrapmark=hues["wrap_light"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# EN: USER THEMES ON DISK.
+#     Beside the three built-in families, RuscaWriter reads themes from a
+#     folder — one small text file each. A theme is seven colours and a name;
+#     everything else (linen, ivory, graphite) is shared, so a person who wants
+#     their own colours writes eight lines, not a stylesheet.
+# IT: TEMI DELL'UTENTE SU DISCO.
+#     Oltre alle tre famiglie incorporate, RuscaWriter legge i temi da una
+#     cartella: un piccolo file di testo ciascuno. Un tema e' sette colori e un
+#     nome; tutto il resto (lino, avorio, grafite) e' in comune, così chi vuole
+#     i propri colori scrive otto righe, non un foglio di stile.
+# ---------------------------------------------------------------------------
+
+# I sette colori di un tema, con il nome usato nei file. Sono in italiano e in
+# inglese: chi scrive il file usa la lingua che preferisce.
+THEME_FILE_KEYS = {
+    "accento": "accent",          "accent": "accent",
+    "accento-scuro": "dark",      "accent-dark": "dark",
+    "accento-chiaro": "light",    "accent-light": "light",
+    "accento-acceso": "glow",     "accent-glow": "glow",
+    "codice": "code",             "code": "code",
+    "velo-chiaro": "wrap_light",  "tint-light": "wrap_light",
+    "velo-scuro": "wrap_dark",    "tint-dark": "wrap_dark",
+}
+
+# Chiavi facoltative: servono solo a chi sceglie un accento CHIARO, dove il
+# bianco sopra le barre non si leggerebbe. Se mancano valgono i valori
+# predefiniti (bianco sulle barre, titoli nel colore dell'accento scuro).
+THEME_FILE_OPTIONAL_KEYS = {
+    "testo-su-accento": "on_accent", "text-on-accent": "on_accent",
+    "testo": "text",                 "text": "text",
+    "barre-scure": "night_accent",   "dark-bars": "night_accent",
+    "fasce": "chrome_a",             "bars": "chrome_a",
+    "fasce-fondo": "chrome_b",       "bars-deep": "chrome_b",
+    "menu": "menubar_a",             "menubar": "menubar_a",
+    "menu-fondo": "menubar_b",       "menubar-deep": "menubar_b",
+    "testo-fasce": "on_chrome",      "text-on-bars": "on_chrome",
+    # i neutri: carta, pannelli, inchiostro e i loro corrispettivi notturni
+    "carta": "paper",               "paper": "paper",
+    "pannelli": "panel",            "panels": "panel",
+    "inchiostro": "ink",            "ink": "ink",
+    "fondo-scuro": "night",         "night": "night",
+    "pannelli-scuri": "night_panel", "night-panels": "night_panel",
+    "carta-scura": "night_ink",     "night-paper": "night_ink",
+    "testo-scuro": "parchment",     "night-text": "parchment",
+    "barre-scure-fondo": "night_accent_dark",
+    "dark-bars-deep": "night_accent_dark",
+}
+THEME_FILE_NAME_KEYS = ("nome", "name")
+
+_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def parse_theme_file(text, fallback_name="Tema"):
+    """Legge un tema da un file di testo. Restituisce (nome, colori, errori).
+
+    Il formato e' volutamente elementare, una riga per colore:
+
+        nome = Standard verde
+        accento = #2E7D4F
+        accento-scuro = #1B5233
+        ...
+
+    Le righe vuote e quelle che iniziano con # sono commenti. Se un colore
+    manca o non e' scritto bene, viene segnalato e il tema NON viene caricato:
+    meglio dirlo che mostrare un'interfaccia mezza rotta.
+    """
+    nome = fallback_name
+    colori = {}
+    errori = []
+    for numero, riga in enumerate((text or "").split("\n"), start=1):
+        pulita = riga.strip()
+        if not pulita or pulita.startswith("#"):
+            continue
+        if "=" not in pulita:
+            errori.append(f"riga {numero}: manca il segno = ({pulita[:30]})")
+            continue
+        chiave, valore = pulita.split("=", 1)
+        chiave = chiave.strip().lower()
+        valore = valore.strip()
+        if chiave in THEME_FILE_NAME_KEYS:
+            if valore:
+                nome = valore
+            continue
+        ruolo = THEME_FILE_KEYS.get(chiave) or THEME_FILE_OPTIONAL_KEYS.get(chiave)
+        if ruolo is None:
+            errori.append(f"riga {numero}: colore sconosciuto '{chiave}'")
+            continue
+        if not _HEX_RE.match(valore):
+            errori.append(
+                f"riga {numero}: '{valore}' non e' un colore (serve #RRGGBB)")
+            continue
+        colori[ruolo] = valore.upper()
+
+    mancanti = [k for k in ("accent", "dark", "light", "glow", "code",
+                            "wrap_light", "wrap_dark") if k not in colori]
+    if mancanti:
+        errori.append("colori mancanti: " + ", ".join(sorted(mancanti)))
+    return nome, colori, errori
+
+
+def load_user_themes(folder):
+    """Carica tutti i file *.theme di una cartella.
+
+    Restituisce (temi, errori): 'temi' e' un dizionario
+    codice -> {"nome": ..., "hues": {...}}, dove il codice e' il nome del file
+    preceduto da "utente:" per non collidere mai con i temi incorporati.
+    'errori' elenca i file scartati, con il motivo, perche' chi ha sbagliato
+    una riga possa correggerla invece di chiedersi perche' non succede nulla.
+    """
+    temi, errori = {}, []
+    try:
+        nomi = sorted(n for n in os.listdir(folder) if n.endswith(".theme"))
+    except Exception:
+        return temi, errori
+    for nome_file in nomi:
+        percorso = os.path.join(folder, nome_file)
+        try:
+            with open(percorso, "r", encoding="utf-8", errors="replace") as f:
+                testo = f.read()
+        except Exception as exc:
+            errori.append(f"{nome_file}: non si riesce a leggerlo ({exc})")
+            continue
+        base = os.path.splitext(nome_file)[0]
+        nome, colori, problemi = parse_theme_file(testo, fallback_name=base)
+        if problemi:
+            errori.append(f"{nome_file}: " + "; ".join(problemi))
+            continue
+        temi[USER_THEME_PREFIX + base] = {"nome": nome, "hues": colori}
+    return temi, errori
+
+
+
+# Temi letti dalla cartella dell'utente. Riempito all'avvio da
+# register_user_themes(); vuoto significa "solo i temi incorporati".
+USER_THEMES = {}
+
+
+def register_user_themes(temi):
+    """Rende disponibili i temi letti da disco. Li aggiunge in coda a THEMES,
+    così compaiono nel menu dopo quelli incorporati."""
+    global USER_THEMES, THEMES
+    USER_THEMES = dict(temi or {})
+    THEMES = BUILTIN_THEMES + tuple(sorted(USER_THEMES))
+    for codice, dati in USER_THEMES.items():
+        THEME_LABEL_FALLBACK[codice] = dati.get("nome", codice)
+    return THEMES
+
+
+def theme_hues(theme):
+    """Colori d'accento di una famiglia standard o di un tema dell'utente,
+    None per il prugna di RuscaLinux (che ha una tavolozza tutta sua)."""
+    if theme in STANDARD_HUES:
+        return STANDARD_HUES[theme]
+    dati = USER_THEMES.get(theme)
+    return dati["hues"] if dati else None
+
+
+def theme_label(theme, translate=None):
+    """Nome da mostrare nel menu. I temi dell'utente portano il nome scritto
+    nel loro file; quelli incorporati passano dalle traduzioni."""
+    if theme in USER_THEMES:
+        return USER_THEMES[theme].get("nome", theme)
+    chiave = THEME_LABEL_KEYS.get(theme)
+    ripiego = THEME_LABEL_FALLBACK.get(theme, theme)
+    if translate and chiave:
+        return translate(chiave, ripiego)
+    return ripiego
+
+
+def theme_palette(theme=DEFAULT_THEME, dark=False):
+    """Restituisce la tavolozza completa di una combinazione tema + luminosità.
+
+    E' l'UNICO posto in cui si decide quale colore svolge quale ruolo. Il
+    foglio di stile (build_css) e i colori del testo Markdown nell'editor
+    leggono entrambi da qui, così le quattro combinazioni — prugna chiaro,
+    prugna scuro, standard chiaro, standard scuro — restano coerenti.
+
+    Le chiavi sono ruoli, non colori: 'accent' è l'accento del tema, non
+    "prugna"; 'editor_bg' è lo sfondo dell'area di scrittura, non "bianco".
+    Per aggiungere una terza famiglia basta aggiungere un ramo qui e il nome
+    in THEMES.
+    """
+    if theme not in THEMES:
+        theme = DEFAULT_THEME
+
+    # Ogni tema — compreso l'Ametista di RuscaLinux — e' una tavolozza
+    # costruita dai suoi colori. Non ci sono piu' rami speciali: aggiungerne
+    # uno vuol dire scrivere i colori e nient'altro.
+    p = _standard_palette(theme_hues(theme), dark)
+
+    # comuni a tutte le combinazioni: la selezione usa sempre l'accento
+    p["sel_bg"] = p["accent"]
+    p["sel_fg"] = p["on_accent"]
+    return p
+
+
+def build_css(dark=False, theme=DEFAULT_THEME):
     """Genera il foglio di stile dell'interfaccia.
 
-    Il tema è costruito da una piccola palette: cambiando i colori qui sotto
-    si ottiene la versione chiara o quella scura, mantenendo in entrambi i
-    casi gli accenti color prugna. Questo è il modo tipico in GTK di gestire
-    più temi: un unico CSS parametrizzato invece di due fogli separati.
+    Il tema è costruito da una piccola tavolozza (theme_palette): cambiando
+    famiglia si ottiene il prugna di RuscaLinux o lo Standard ispirato a
+    Scrivener, e per ciascuna la versione chiara o quella scura. Questo è il
+    modo tipico in GTK di gestire più temi: un unico CSS parametrizzato invece
+    di quattro fogli separati.
     """
-    if dark:
-        bg_top, bg_bottom = PLUM_NIGHT, PLUM_PANEL      # sfondo finestra
-        header_a, header_b = PLUM_DARK, PLUM_NIGHT       # barra superiore
-        panel_bg = PLUM_PANEL                            # pannelli laterali (pieno)
-        list_text = PLUM_GLOW                            # titoli capitoli
-        editor_bg = PLUM_INK                             # area di scrittura
-        editor_fg = PAPER                                # testo scritto
-        notes_fg = PLUM_GLOW
-        title_fg = PLUM_GLOW
-        status_a, status_b = PLUM_DARK, PLUM_NIGHT
-        status_fg = PLUM_GLOW
-        findbar_bg = "rgba(30,16,24,0.95)"
-        sel_bg, sel_fg = PLUM, WHITE
-        dialog_fg = PAPER          # testo dei dialoghi su sfondo scuro
-        entry_bg, entry_fg = PLUM_INK, PAPER
-    else:
-        bg_top, bg_bottom = PLUM_LIGHT, WHITE
-        header_a, header_b = PLUM, PLUM_LIGHT
-        panel_bg = "rgba(255,255,255,0.55)"
-        list_text = PLUM_DARK
-        editor_bg = WHITE
-        editor_fg = "#000000"
-        notes_fg = PLUM_DARK
-        title_fg = PLUM_DARK
-        status_a, status_b = PLUM_LIGHT, WHITE
-        status_fg = PLUM_DARK
-        findbar_bg = "rgba(255,255,255,0.85)"
-        sel_bg, sel_fg = PLUM, WHITE
-        dialog_fg = PLUM_DARK       # testo dei dialoghi su sfondo chiaro
-        entry_bg, entry_fg = WHITE, "#000000"
+    p = theme_palette(theme, dark)
+
+    accent      = p["accent"]
+    accent_dark = p["accent_dark"]
+    on_accent   = p["on_accent"]
+    bg_top, bg_bottom   = p["bg_top"], p["bg_bottom"]
+    header_a, header_b  = p["header_a"], p["header_b"]
+    panel_bg            = p["panel_bg"]
+    list_text           = p["list_text"]
+    editor_bg, editor_fg = p["editor_bg"], p["editor_fg"]
+    notes_fg            = p["notes_fg"]
+    title_fg            = p["title_fg"]
+    status_a, status_b  = p["status_a"], p["status_b"]
+    status_fg           = p["status_fg"]
+    findbar_bg          = p["findbar_bg"]
+    sel_bg, sel_fg      = p["sel_bg"], p["sel_fg"]
+    dialog_fg           = p["dialog_fg"]
+    entry_bg, entry_fg  = p["entry_bg"], p["entry_fg"]
+    menubar_a, menubar_b = p["menubar_a"], p["menubar_b"]
+    on_chrome           = p["on_chrome"]
 
     return f"""
 /* Interfaccia generale: sfondo a sfumatura */
@@ -1405,8 +2932,8 @@ window, .rusca-bg {{
 }}
 
 .rusca-toolbar button {{
-    background-image: linear-gradient(to bottom, {PLUM}, {PLUM_DARK});
-    color: {WHITE};
+    background-image: linear-gradient(to bottom, {accent}, {accent_dark});
+    color: {on_accent};
     border-radius: 6px;
     padding: 6px 14px;
     margin: 2px;
@@ -1414,25 +2941,25 @@ window, .rusca-bg {{
     border: none;
 }}
 .rusca-toolbar button:hover {{
-    background-image: linear-gradient(to bottom, {PLUM_DARK}, {PLUM});
+    background-image: linear-gradient(to bottom, {accent_dark}, {accent});
 }}
 
 /* Barra menu in stile Scrivener */
 .rusca-menubar {{
-    background-image: linear-gradient(to bottom, {PLUM}, {PLUM_DARK});
-    color: {WHITE};
+    background-image: linear-gradient(to bottom, {menubar_a}, {menubar_b});
+    color: {on_chrome};
     padding: 1px 4px;
 }}
 .rusca-menubar > menuitem {{
-    color: {WHITE};
+    color: {on_chrome};
     padding: 4px 10px;
     border-radius: 4px;
 }}
 .rusca-menubar > menuitem:hover {{
-    background-color: {PLUM_DARK};
+    background-color: {menubar_b};
 }}
 .rusca-menubar menuitem:disabled {{
-    color: alpha({WHITE}, 0.5);
+    color: alpha({on_chrome}, 0.5);
 }}
 
 /* Colonna sinistra: titoli dei capitoli */
@@ -1464,8 +2991,8 @@ textview.text-editor, textview.text-editor text {{
     caret-color: {editor_fg};
 }}
 .text-editor text selection {{
-    background-color: {PLUM};
-    color: {WHITE};
+    background-color: {sel_bg};
+    color: {sel_fg};
 }}
 
 /* Colonna destra: note */
@@ -1492,7 +3019,7 @@ textview.notes-editor, textview.notes-editor text {{
 
 .rusca-statusbar {{
     background-image: linear-gradient(to right, {status_a}, {status_b});
-    border-top: 1px solid {PLUM};
+    border-top: 1px solid {accent};
 }}
 .statusbar-label {{
     color: {status_fg};
@@ -1502,32 +3029,32 @@ textview.notes-editor, textview.notes-editor text {{
 }}
 .rusca-findbar {{
     background-color: {findbar_bg};
-    border-bottom: 1px solid {PLUM};
+    border-bottom: 1px solid {accent};
 }}
 .rusca-fontlabel {{
-    color: {WHITE};
+    color: {on_chrome};
     font-family: Serif;
     font-weight: bold;
     padding: 0 2px;
 }}
-/* Pulsante hamburger (☰) nella barra superiore: stesso stile prugna dei
+/* Pulsante hamburger (☰) nella barra superiore: stesso stile dell'accento dei
    pulsanti della toolbar, leggibile su sfondo scuro e chiaro. */
 .rusca-menubtn {{
-    color: {WHITE};
-    background-image: linear-gradient(to bottom, {PLUM}, {PLUM_DARK});
+    color: {on_accent};
+    background-image: linear-gradient(to bottom, {accent}, {accent_dark});
     border: none;
     border-radius: 6px;
     padding: 4px 8px;
     margin: 2px;
 }}
 .rusca-menubtn:hover {{
-    background-image: linear-gradient(to bottom, {PLUM_DARK}, {PLUM});
+    background-image: linear-gradient(to bottom, {accent_dark}, {accent});
 }}
 """
 
 
-# CSS predefinito (tema chiaro), per compatibilità con codice esistente
-CSS = build_css(dark=False)
+# CSS predefinito (tema RuscaLinux chiaro), per compatibilità con codice esistente
+CSS = build_css(dark=False, theme=DEFAULT_THEME)
 
 
 class Chapter:
@@ -1694,7 +3221,7 @@ class Project:
         self.colophon_fields = {k: "" for k in COLO_FIELDS}
         cover = Chapter(0, self._make_cover_text(title), "", is_cover=True)
         # Nessun capitolo creato in automatico: il progetto parte vuoto e
-        # l'utente aggiunge i capitoli che vuole (Capitolo -> Nuovo capitolo).
+        # l'utente aggiunge i capitoli che vuole (Capitolo -> Aggiungi capitolo).
         self.chapters = [cover]
 
     def import_text_file(self, path):
@@ -1704,9 +3231,15 @@ class Project:
         intestazioni di primo o secondo livello (# / ##) come punti di taglio;
         per il TXT, se ci sono righe di separazione tipo capitolo le usa,
         altrimenti tiene tutto in un unico capitolo."""
-        import re
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             raw = f.read()
+        raw = raw.replace("\r\n", "\n").replace("\r", "\n")
+        # Via l'intestazione e la licenza di Project Gutenberg, se ci sono:
+        # sono righe generate a macchina, riconosciute alla lettera.
+        # I paragrafi spezzati a colonna fissa, invece, NON si toccano qui:
+        # e' una scelta di chi scrive, e la fa dal menu quando vuole
+        # (vedi wrapped_runs e rejoin_paragraphs).
+        raw = strip_gutenberg_boilerplate(raw)
 
         title = os.path.splitext(os.path.basename(path))[0]
         is_md = path.lower().endswith((".md", ".markdown"))
@@ -1974,35 +3507,55 @@ class Project:
                 out.write("\n")
 
     # --- helper comuni agli export documentali ----------------------------
-    def _cover_lines(self):
-        """Righe della copertina grafica (usata quando NON c'e' un'immagine).
-        Le prende dai campi del frontespizio (titolo, autore, editore): la
-        copertina non e' piu' un capitolo a se'. Per i progetti vecchi, se i
-        campi sono tutti vuoti, ripiega sul testo del vecchio capitolo-copertina
-        cosi' non si perde nulla."""
+    def cover_lines_with_roles(self):
+        """Righe della copertina grafica con il loro RUOLO tipografico.
+
+        Restituisce una lista di (testo, ruolo) con ruolo fra "title",
+        "subtitle", "author" e "publisher".
+
+        Il ruolo si dichiara, non si indovina. Prima gli export lo deducevano
+        dalla posizione — prima riga il titolo, ultima l'editore, il resto
+        l'autore — e con DUE sole righe gli intervalli si sovrapponevano: lo
+        stesso nome finiva stampato due volte, una come autore e una in coda.
+        I campi del frontespizio sanno gia' cos'e' cosa: basta chiederglielo.
+        """
         f = getattr(self, "frontispiece_fields", {}) or {}
-        lines = []
-        if f.get("title", "").strip():
-            lines.append(f["title"].strip())
-        if f.get("subtitle", "").strip():
-            lines.append(f["subtitle"].strip())
-        if f.get("author", "").strip():
-            lines.append(f["author"].strip())
-        if f.get("publisher", "").strip():
-            lines.append(f["publisher"].strip())
-        if lines:
-            return lines
-        # ripiego: vecchio capitolo-copertina (compatibilita')
+        voci = []
+        for campo, ruolo in (("title", "title"), ("subtitle", "subtitle"),
+                             ("author", "author"), ("publisher", "publisher")):
+            valore = (f.get(campo) or "").strip()
+            if valore:
+                voci.append((valore, ruolo))
+        if voci:
+            return voci
+
+        # Ripiego per i progetti vecchi, dove la copertina era testo libero in
+        # un capitolo: li' il ruolo si puo' solo dedurre dalla posizione, ma
+        # senza mai usare due volte la stessa riga.
+        righe = []
         cover = self.cover()
         if cover is not None:
             for ln in cover.text.splitlines():
                 s = _strip_inline_md(ln.lstrip("#").strip()
                                      if ln.strip().startswith("#") else ln).strip()
                 if s:
-                    lines.append(s)
-        if not lines and self.title:
-            lines.append(self.title)
-        return lines
+                    righe.append(s)
+        if not righe and self.title:
+            righe.append(self.title)
+        if not righe:
+            return []
+        voci = [(righe[0], "title")]
+        if len(righe) > 2:
+            voci += [(r, "author") for r in righe[1:-1]]
+            voci.append((righe[-1], "publisher"))
+        elif len(righe) == 2:
+            voci.append((righe[1], "author"))
+        return voci
+
+    def _cover_lines(self):
+        """Solo i testi della copertina, nell'ordine. Per chi non ha bisogno
+        dei ruoli; chi li vuole usa cover_lines_with_roles()."""
+        return [testo for testo, _ruolo in self.cover_lines_with_roles()]
 
     def _ordered_chapters(self):
         """Capitoli di contenuto (esclusa la copertina) con titolo risolto."""
@@ -2181,25 +3734,24 @@ class Project:
         semplice e robusta."""
         blocks = []
         for raw in text.split("\n"):
-            s = raw.strip()
-            if not s:
+            kind, body, extra = classify_md_line(raw)
+            if kind == "blank":
                 continue
-            mi = _IMG_LINE_RE.match(s)
-            if mi and mi.group("src") in self.images:
-                blocks.append(("image", (mi.group("alt"), mi.group("src"))))
-                continue
-            m = re.match(r"^(#{1,6})\s+(.*)$", s)
-            if m:
-                lvl = min(3, len(m.group(1)))
-                blocks.append((f"h{lvl}", _strip_inline_md(m.group(2))))
-            elif s[:2] in ("- ", "* ", "+ "):
-                blocks.append(("bullet", _strip_inline_md(s[2:])))
-            elif re.match(r"^\d+\.\s+", s):
-                blocks.append(("bullet", _strip_inline_md(re.sub(r"^\d+\.\s+", "", s))))
-            elif s.startswith(">"):
-                blocks.append(("quote", _strip_inline_md(s.lstrip(">").strip())))
+            if kind == "image":
+                # un riferimento rotto (immagine non piu' nel progetto) non e'
+                # una figura: resta un paragrafo con la sola didascalia
+                if extra in self.images:
+                    blocks.append(("image", (body, extra)))
+                else:
+                    blocks.append(("p", _strip_inline_md(body)))
+            elif kind == "heading":
+                blocks.append((f"h{min(3, extra)}", _strip_inline_md(body)))
+            elif kind in ("bullet", "number"):
+                blocks.append(("bullet", _strip_inline_md(body)))
+            elif kind == "quote":
+                blocks.append(("quote", _strip_inline_md(body)))
             else:
-                blocks.append(("p", _strip_inline_md(s)))
+                blocks.append(("p", _strip_inline_md(body)))
         return blocks
 
     def _blocks_to_html(self, text, image_html=None):
@@ -2230,55 +3782,52 @@ class Project:
 
         figure = image_html or default_image_html
 
+        # marcatura HTML di ogni stile inline riconosciuto dal parser comune
+        _WRAP = {
+            "bold": ("<strong>", "</strong>"),
+            "italic": ("<em>", "</em>"),
+            "bolditalic": ("<strong><em>", "</em></strong>"),
+            "code": ("<code>", "</code>"),
+            "regular": ("", ""),
+        }
+
         def inline(s):
-            s = esc(s)
-            s = re.sub(r"\[(.+?)\]\((.+?)\)", r"\1", s)
-            s = re.sub(r"(\*\*\*|___)(.+?)\1", r"<strong><em>\2</em></strong>", s)
-            s = re.sub(r"(\*\*|__)(.+?)\1", r"<strong>\2</strong>", s)
-            s = re.sub(r"(\*|_)(.+?)\1", r"<em>\2</em>", s)
-            s = re.sub(r"`(.+?)`", r"<code>\1</code>", s)
-            return s
+            parts = []
+            for seg, style in parse_inline(s):
+                open_t, close_t = _WRAP[style]
+                parts.append(f"{open_t}{esc(seg)}{close_t}")
+            return "".join(parts)
 
         out = []
         lines = text.split("\n")
+        kinds = [classify_md_line(ln) for ln in lines]
         i = 0
         while i < len(lines):
-            s = lines[i].strip()
-            if not s:
+            kind, body, extra = kinds[i]
+            if kind == "blank":
                 i += 1
                 continue
-            mi = _IMG_LINE_RE.match(s)
-            if mi:
+            if kind == "image":
                 # EN: attached image; if the reference is broken (image not in
                 #     the project) fall back to showing the caption only.
                 # IT: immagine allegata; se il riferimento e' rotto (immagine
                 #     assente dal progetto) ripiega sulla sola didascalia.
-                fig = (figure(mi.group("alt"), mi.group("src"))
-                       if mi.group("src") in self.images else None)
-                out.append(fig if fig else
-                           f"<p><em>{esc(mi.group('alt'))}</em></p>")
+                fig = figure(body, extra) if extra in self.images else None
+                out.append(fig if fig else f"<p><em>{esc(body)}</em></p>")
                 i += 1
-                continue
-            m = re.match(r"^(#{1,6})\s+(.*)$", s)
-            if m:
-                lvl = min(6, len(m.group(1)))
-                out.append(f"<h{lvl}>{inline(m.group(2))}</h{lvl}>")
+            elif kind == "heading":
+                out.append(f"<h{extra}>{inline(body)}</h{extra}>")
                 i += 1
-            elif s[:2] in ("- ", "* ", "+ "):
+            elif kind in ("bullet", "number"):
+                # elenco: accorpa le righe contigue dello stesso tipo
+                tag = "ul" if kind == "bullet" else "ol"
                 items = []
-                while i < len(lines) and lines[i].strip()[:2] in ("- ", "* ", "+ "):
-                    items.append(f"<li>{inline(lines[i].strip()[2:])}</li>")
+                while i < len(lines) and kinds[i][0] == kind:
+                    items.append(f"<li>{inline(kinds[i][1])}</li>")
                     i += 1
-                out.append("<ul>" + "".join(items) + "</ul>")
-            elif re.match(r"^\d+\.\s+", s):
-                items = []
-                while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
-                    body = re.sub(r"^\d+\.\s+", "", lines[i].strip())
-                    items.append(f"<li>{inline(body)}</li>")
-                    i += 1
-                out.append("<ol>" + "".join(items) + "</ol>")
-            elif s.startswith(">"):
-                out.append(f"<blockquote>{inline(s.lstrip('>').strip())}</blockquote>")
+                out.append(f"<{tag}>" + "".join(items) + f"</{tag}>")
+            elif kind == "quote":
+                out.append(f"<blockquote>{inline(body)}</blockquote>")
                 i += 1
             else:
                 # EN: plain paragraph: merge contiguous lines, but stop at any
@@ -2287,9 +3836,8 @@ class Project:
                 #     a ogni inizio blocco (titolo, elenco, citazione,
                 #     immagine allegata).
                 buf = []
-                while i < len(lines) and lines[i].strip() and not re.match(
-                        r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>|!\[)", lines[i].strip()):
-                    buf.append(inline(lines[i].strip()))
+                while i < len(lines) and kinds[i][0] == "text":
+                    buf.append(inline(kinds[i][1]))
                     i += 1
                 out.append("<p>" + "<br/>".join(buf) + "</p>")
         return out
@@ -2334,7 +3882,6 @@ class Project:
         - multifile=True: crea una cartella accanto a 'path' con un index.html
           (copertina + indice) e un file per ogni capitolo, collegati tra loro.
         """
-        import os
         from xml.sax.saxutils import escape as esc
 
         cover_lines = self._cover_lines()
@@ -2363,11 +3910,13 @@ class Project:
                 # copertina bianca e vuota
                 pass
             else:
+                # ogni riga sa gia' che ruolo ha: nessuna deduzione
                 h.append(f'<h1 class="title">{esc(title)}</h1>')
-                for mid in cover_lines[1:-1]:
-                    h.append(f'<p class="author">{esc(mid)}</p>')
-                if len(cover_lines) > 1:
-                    h.append(f'<p class="date">{esc(cover_lines[-1])}</p>')
+                for testo, ruolo in self.cover_lines_with_roles():
+                    if ruolo in ("subtitle", "author"):
+                        h.append(f'<p class="author">{esc(testo)}</p>')
+                    elif ruolo == "publisher":
+                        h.append(f'<p class="date">{esc(testo)}</p>')
             h.append('</div>')
             return "\n".join(h)
 
@@ -2885,7 +4434,8 @@ class Project:
 
 
     def export_pdf(self, path, font_size=12, embed_fonts=None,
-                   embed_font_name="CourierPrime", page_size="A4"):
+                   embed_font_name="CourierPrime", page_size="A4",
+                   justify=False, hyphenate=False, hyphen_lang="it"):
         """Salva in PDF con markdown di base. Se embed_fonts e' fornito (dict
         stile->metrics), il testo usa il font del documento incorporato e rende
         grassetto/corsivo. La copertina e' una pagina senza numero; la
@@ -2893,8 +4443,17 @@ class Project:
 
         page_size sceglie il formato pagina: "A4" (predefinito) o "A5". Le
         dimensioni e il margine vengono presi da PDF_PAGE_SIZES; un valore non
-        riconosciuto ripiega su A4."""
+        riconosciuto ripiega su A4.
+
+        justify   : se True, i paragrafi del corpo sono giustificati alla
+                    larghezza del testo (l'ultima riga resta allineata a
+                    sinistra; le intestazioni non si giustificano).
+        hyphenate : se True e Pyphen e' disponibile, le parole lunghe vengono
+                    sillabate con un trattino per una giustificazione piu'
+                    ordinata; ignorato se Pyphen manca.
+        hyphen_lang : codice lingua del dizionario di sillabazione (es. "it")."""
         cover_paragraphs = None
+        cover_roles = None
         chapters_paragraphs = []
         chapter_titles = []
         n = 0
@@ -2906,7 +4465,9 @@ class Project:
                 # frontespizio (titolo, autore, editore), non dal testo del
                 # vecchio capitolo-copertina. _cover_lines() gestisce anche il
                 # ripiego per i progetti vecchi.
-                cover_paragraphs = self._cover_lines() or paras
+                voci_cop = self.cover_lines_with_roles()
+                cover_paragraphs = [t for t, _r in voci_cop] or paras
+                cover_roles = [r for _t, r in voci_cop] or None
             else:
                 n += 1
                 chapters_paragraphs.append(paras)
@@ -2938,6 +4499,7 @@ class Project:
         spec = PDF_PAGE_SIZES.get(page_size, PDF_PAGE_SIZES[PDF_DEFAULT_PAGE_SIZE])
         write_pdf(path, chapters_paragraphs, title=self.title,
                   cover_paragraphs=cover_paragraphs,
+                  cover_roles=cover_roles,
                   chapter_titles=chapter_titles,
                   toc_label=self.t_index_label(),
                   font_size=font_size, leading=leading,
@@ -2949,7 +4511,8 @@ class Project:
                   chapter_images=chapter_images,
                   frontispiece_paragraphs=front,
                   colophon_paragraphs=colo,
-                  blank_cover=blank_cover)
+                  blank_cover=blank_cover,
+                  justify=justify, hyphenate=hyphenate, hyphen_lang=hyphen_lang)
 
     def _make_cover_png(self, cover_lines, width=600, height=900):
         """Genera i byte di un'immagine PNG di copertina (raster), necessaria
@@ -2958,10 +4521,11 @@ class Project:
         non un SVG. Se Pillow è disponibile, disegna anche titolo e autore;
         altrimenti produce con la sola libreria standard un PNG con sfondo,
         cornice e filetti (senza testo), comunque valido come anteprima."""
-        title = cover_lines[0] if cover_lines else self.title
-        middle = cover_lines[1:-1] if len(cover_lines) > 2 else (
-            [cover_lines[1]] if len(cover_lines) == 2 else [])
-        date = cover_lines[-1] if len(cover_lines) > 1 else ""
+        voci = self.cover_lines_with_roles()
+        title = next((t for t, r in voci if r == "title"),
+                     cover_lines[0] if cover_lines else self.title)
+        middle = [t for t, r in voci if r in ("subtitle", "author")]
+        date = next((t for t, r in voci if r == "publisher"), "")
 
         # --- tentativo con Pillow (testo nitido) --------------------------
         try:
@@ -2976,8 +4540,6 @@ class Project:
 
             def font(sz, bold=False):
                 # prova alcuni font di sistema comuni; ripiego sul font interno
-                names = (["DejaVuSerif-Bold.ttf", "DejaVuSerif.ttf"] if not bold
-                         else ["DejaVuSerif-Bold.ttf"])
                 for n in (["DejaVuSerif-Bold.ttf"] if bold else
                           ["DejaVuSerif.ttf", "DejaVuSerif-Bold.ttf"]):
                     try:
@@ -3058,7 +4620,6 @@ class Project:
         plum = (92, 42, 85)
 
         # buffer pixel
-        row_bytes = bytearray()
         raw = bytearray()
         # disegniamo: cornice spessa 3px e due filetti orizzontali
         def px(x, y):
@@ -3117,7 +4678,7 @@ class Project:
         capitolo una sezione XHTML separata. Il markdown di base
         (intestazioni, grassetto, corsivo, liste, citazioni) viene reso in
         HTML semplice. Titolo e autore provengono dal progetto/copertina."""
-        import zipfile, html, re, uuid, datetime
+        import zipfile, html, uuid, datetime
 
         # --- titolo e autore: prima di tutto dai CAMPI del frontespizio ----
         # (File -> Sezioni editoriali). _cover_lines() usa i campi e ripiega
@@ -3379,13 +4940,11 @@ class Project:
     def _find_calibre_converter():
         """Cerca l'eseguibile 'ebook-convert' di Calibre nel sistema.
         Restituisce il percorso o None se Calibre non è installato."""
-        import shutil
         # nel PATH
         exe = shutil.which("ebook-convert")
         if exe:
             return exe
         # percorsi tipici (Linux, macOS, Windows)
-        import os
         candidates = [
             "/usr/bin/ebook-convert",
             "/opt/calibre/ebook-convert",
@@ -3406,7 +4965,7 @@ class Project:
 
         Restituisce il percorso prodotto. Solleva RuntimeError con istruzioni
         se la conversione non è possibile."""
-        import os, tempfile, subprocess
+        import subprocess
 
         converter = self._find_calibre_converter()
         if not converter:
@@ -3469,6 +5028,30 @@ class Project:
         self.chapters.append(ch)
         self._renumber()
         return ch
+
+    def count_wrapped_runs(self):
+        """Quanti paragrafi spezzati a colonna fissa ci sono in tutto il
+        progetto, e su quante righe. Serve a CHIEDERE, non a decidere."""
+        paragrafi = righe = 0
+        for ch in self.chapters:
+            for first, last in wrapped_runs(ch.text):
+                paragrafi += 1
+                righe += last - first
+        return paragrafi, righe
+
+    def rejoin_paragraphs(self):
+        """Ricuce i paragrafi spezzati di TUTTI i capitoli. Restituisce
+        (paragrafi, righe) effettivamente sistemati. Da chiamare solo dopo un
+        assenso esplicito: la ricucitura cambia il testo di chi scrive."""
+        paragrafi = righe = 0
+        for ch in self.chapters:
+            runs = wrapped_runs(ch.text)
+            if not runs:
+                continue
+            paragrafi += len(runs)
+            righe += sum(last - first for first, last in runs)
+            ch.text = unwrap_hard_breaks(ch.text)
+        return paragrafi, righe
 
     def delete_chapter(self, row):
         """Rimuove il capitolo alla posizione 'row'. La copertina e' protetta."""

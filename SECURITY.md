@@ -1,131 +1,110 @@
-# Security Policy
+# Security
 
-RuscaWriter is a local desktop writing editor. It does not connect to the
-network, run a server, or handle user accounts, so its attack surface is
-small. Still, we take security seriously and welcome responsible reports.
+RuscaWriter is a desktop editor. It never goes online, runs no server and has
+no accounts, so there is not much surface to attack. What there is, we take
+seriously.
 
-*Ultimo aggiornamento / last updated: version 0.3 (July 2026). Una versione
-italiana di questo documento è disponibile in [SECURITY.it.md](SECURITY.it.md).*
+## Reporting a problem
 
-## Reporting a vulnerability
+**Do not open a public issue.** That tells everyone about the flaw before there
+is a fix.
 
-**Please do not open a public issue for security problems.** Public issues
-expose the flaw to everyone — including potential attackers — before a fix is
-available.
+Report it privately:
 
-Instead, report it privately through GitHub:
+1. Go to the
+   [Security tab](https://github.com/ruscalinux-dev/ruscawriter/security).
+2. Click **Report a vulnerability**. Only the maintainers see it.
 
-1. Go to the **[Security tab](https://github.com/ruscalinux-dev/ruscawriter/security)**
-   of this repository.
-2. Click **"Report a vulnerability"** to open a private advisory visible only
-   to the maintainers.
+Or email **<info@ruscalinux.org>**.
 
-If you cannot use GitHub's private reporting, you may also email
-**<info@ruscalinux.org>**.
+It helps to include:
 
-When reporting, it helps to include:
+- what the problem is, and why it matters;
+- how to make it happen again — a sample `.rwr` file or image, if that is what
+  triggers it;
+- your version and operating system;
+- a fix, if you have one.
 
-- a description of the issue and why it is a security concern;
-- the steps to reproduce it (a sample `.rwr` file or image, if relevant);
-- the affected version and your operating system;
-- any suggested fix, if you have one.
-
-## What to expect
-
-- We aim to acknowledge a report within **7 days**.
-- We will keep you informed about our assessment and the fix timeline.
-- Once a fix is released, we are happy to credit you in the advisory unless
-  you prefer to stay anonymous.
+You should hear back within 7 days. Once it is fixed, we will credit you in the
+advisory unless you would rather stay anonymous.
 
 ## Supported versions
 
-RuscaWriter is in early development. Security fixes are applied to the
-**latest release** only. Please make sure you are on the most recent version
-before reporting.
+Fixes go into the latest release.
 
-| Version        | Supported          |
-| -------------- | ------------------ |
-| 0.3 (latest)   | :white_check_mark: |
-| 0.2.x and older| :x:                |
+| Version                    | Supported          |
+| -------------------------- | ------------------ |
+| latest release             | :white_check_mark: |
+| the one before it          | :white_check_mark: |
+| anything older             | :x:                |
 
-## Scope
+Your version is in Help → About. Releases are on the
+[Releases](https://github.com/ruscalinux-dev/ruscawriter/releases) page.
 
-Because RuscaWriter is an offline desktop application, the most realistic
-risk is **opening a malicious file** crafted by a third party. As of version
-0.3 the untrusted inputs are:
+## What could go wrong
 
-- **`.rwr` project files** (tar.gz archives) received from someone else;
-- **image files** attached to chapters or set as cover
-  (PNG, JPEG, WebP — a feature introduced in 0.3);
-- **text/Markdown files** imported as chapters.
+The program is offline, so the realistic risk is **opening a file someone else
+made**. Those files are:
 
-Reports about how such files could crash the app, execute code, exhaust
-resources (memory/CPU via decompression or oversized images), or write
-outside the intended location are especially welcome.
+- `.rwr` projects;
+- images attached to chapters or used as a cover (PNG, JPEG, WebP);
+- text and Markdown files imported as chapters.
 
-## Security posture of version 0.3
+Reports about such a file crashing the program, running code, eating all the
+memory, or writing somewhere it should not, are very welcome.
 
-This section summarizes the properties verified by static analysis of the
-0.3 source and by the automated test suite. It describes what we checked —
-it is not a claim of absolute security.
+## What we have checked
 
-**No network, no telemetry.** The source contains no networking code
-(`urllib`, `socket`, `requests`, `http.client`): the application never opens
-connections, checks for updates, or transmits data.
+Verified by reading the source and by the automated tests. It is a list of what
+we looked at, not a promise that nothing is wrong.
 
-**No dynamic code execution or unsafe deserialization.** There is no
-`eval`, `exec`, `pickle`, `marshal` or `shelve` anywhere in the code base.
-All persistent data uses passive formats: JSON, Markdown, plain text.
+**No network. No telemetry.** There is no networking code in the source — no
+`urllib`, `socket`, `requests` or `http.client`. The program opens no
+connections, checks for no updates and sends nothing anywhere.
 
-**Careful archive handling.** When loading a `.rwr` archive, only regular
-file members are accepted (symlinks, devices and directories are skipped),
-member names are reduced to their base name (`os.path.basename`), contents
-are read into memory rather than extracted to disk, and only names matching
-strict patterns (`NN.md`, `NNn.md`, `img_NNN.png/jpg/webp`,
-`cover.*`, `*.json`) are actually used. There is no call to `extractall`.
+**No code is generated or executed at runtime.** No `eval`, no `exec`, no
+`pickle`, no `marshal`, no `shelve`. Everything saved is passive: JSON,
+Markdown, plain text.
 
-**Image validation by content.** Attached and cover images (new in 0.3) are
-identified by their magic bytes, never by file extension; unsupported or
-malformed headers are rejected before the data enters the project.
+**Archives are opened carefully.** Loading a `.rwr` accepts regular files only
+— symlinks, devices and directories are skipped. Member names are cut down to
+their base name. Contents are read into memory, not unpacked to disk. Only
+names matching strict patterns are used. `extractall` is never called.
 
-**Constrained use of external programs.** The only `subprocess` call in the
-code base is the optional AZW3 export, which invokes Calibre's
-`ebook-convert` found in known system locations, as an argument list
-(never `shell=True`), with a 300-second timeout.
+**Images are identified by their bytes**, never by their file name. A bad or
+unsupported header is rejected before the data gets into the project.
 
-**Atomic saves.** Projects are written to a temporary file and moved into
-place only on success, so a crash mid-save cannot corrupt the previous copy.
+**One external program, tightly held.** The only `subprocess` call is the
+optional AZW3 export. It runs Calibre's `ebook-convert` from known system
+paths, as an argument list, never through a shell, with a 300-second timeout.
 
-**Minimal dependencies.** Everything runs on the Python standard library
-plus PyGObject/GTK 4. Pillow is optional (image conversion for PDF/DOCX) and
-its absence is handled gracefully; when Pillow is installed, image decoding
-partly happens in Pillow, so keeping it updated matters.
+**Saves are atomic.** A project is written to a temporary file and moved into
+place only once it is complete. A crash mid-save cannot damage the previous
+copy.
 
-**Writes are limited** to paths the user chooses in save/export dialogs,
-the autosave file, the configuration folder, and Enchant's personal spelling
-dictionaries under `~/.config/enchant/` (documented in the source; entries
-are only added, never removed).
+**Few dependencies.** Python standard library plus PyGObject and GTK 4. Pillow
+and Pyphen are optional; without them, the features that need them are simply
+disabled.
 
-## Known considerations
+**Writes are limited** to the paths you pick in a save or export dialog, the
+autosave file, the configuration folder, and the personal spelling dictionaries
+under `~/.config/enchant/` — where entries are only added, never removed.
 
-Areas we consider residual risk within the current design, and where reports
-or patches are particularly appreciated:
+## Known weak spots
 
-- **Resource exhaustion.** Archive contents and attached images are loaded
-  into memory without an explicit size ceiling; a maliciously large or
-  highly compressed `.rwr` could exhaust RAM ("decompression bomb").
-- **Third-party decoders.** When present, Pillow (image conversion) and
-  Calibre (AZW3 export) process untrusted data; vulnerabilities in those
-  projects affect the corresponding optional features.
+Where we would most welcome a report or a patch:
 
-## Verifying your download
+- **Memory.** Archive contents and images are loaded without a size limit. A
+  deliberately huge or heavily compressed `.rwr` could exhaust RAM.
+- **Other people's decoders.** When installed, Pillow decodes images and
+  Calibre converts to AZW3. Their bugs become bugs in those optional features.
 
-Release archives ship with a `SHA256SUMS` file. After downloading, run:
+## Checking your download
+
+Releases ship a `SHA256SUMS` file:
 
 ```
 sha256sum -c SHA256SUMS
 ```
 
-and make sure every line reports `OK` before running the code.
-
-Thank you for helping keep RuscaWriter and its users safe.
+Every line should say `OK` before you run anything.

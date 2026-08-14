@@ -18,7 +18,7 @@
 
 """
 RuscaWriter — GTK 4 user interface / interfaccia grafica GTK 4
-Versione / Version: 0.3
+Versione / Version: vedi model.APP_VERSION_SHORT / see model.APP_VERSION_SHORT
 Autore / Author: Nunzio Curcuruto
 
 EN — Three-column writing editor built with Python + GTK 4 (PyGObject),
@@ -71,13 +71,12 @@ Questo modulo e' stato portato da GTK 3 a GTK 4. Differenze principali:
 """
 
 import os
-import sys
 import json
 import locale
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gdk, Pango, GLib, Gio, GObject
+from gi.repository import Gtk, Gdk, Pango, GLib, Gio
 try:
     gi.require_version("GdkPixbuf", "2.0")
     from gi.repository import GdkPixbuf
@@ -130,23 +129,39 @@ HAVE_GTKSPELL = HAVE_SPELL   # nome storico mantenuto per compatibilita'
 from . import paths
 from . import model as pw_model
 from .model import (
-    APP_NAME, APP_VERSION, APP_VERSION_SHORT, APP_AUTHOR,
+    APP_NAME, APP_VERSION, APP_VERSION_SHORT, APP_AUTHOR, APP_RELEASE_DATE,
     TYPEWRITER_FAMILY, TYPEWRITER_FILE, TYPEWRITER_FILES,
-    SERIF_FAMILY, SERIF_FILE, SERIF_FILES,
+    SERIF_FILES,
     MIN_FONT_SIZE, MAX_FONT_SIZE,
-    FRONT_FIELDS, COLO_FIELDS,
     PDF_PAGE_SIZES, PDF_DEFAULT_PAGE_SIZE, PDF_PAGE_SIZE_LABELS,
-    Chapter, Project, write_pdf, read_ttf_metrics,
+    Project, read_ttf_metrics,
+    TYPEWRITER_FAMILY as _TW_FAMILY, SERIF_FAMILY,
+    system_font_families, font_files_for_family,
+    HAVE_PYPHEN, hyphenation_available,
 )
+# EN/IT: theme families (plum "rusca" and neutral "standard", each in a light
+# and a dark version). All colours come from theme_palette(): the interface
+# never writes a colour of its own.
+# Famiglie di tema (prugna "rusca" e neutra "standard", ciascuna in versione
+# chiara e scura). Tutti i colori arrivano da theme_palette(): l'interfaccia
+# non scrive mai un colore per conto suo.
 from .model import (
-    PLUM, PLUM_DARK, PLUM_LIGHT, WHITE,
-    PLUM_NIGHT, PLUM_PANEL, PLUM_INK, PLUM_GLOW, PAPER,
-    build_css,
+    DEFAULT_THEME, theme_palette, build_css, resolve_theme,
+    load_user_themes, register_user_themes,
+    theme_label as model_theme_label,
 )
-from . import i18n as pw_i18n
+# NB: THEMES cresce a runtime con i temi trovati su disco, quindi si legge
+# sempre come pw_model.THEMES (il modulo e' gia' importato qui sopra) e non si
+# copia mai in un nome locale, o i temi dell'utente resterebbero invisibili.
+# EN/IT: the Markdown rules, shared with every export: the preview and the
+# live highlighting must show what the exports will produce.
+# Le regole del Markdown, in comune con tutti gli export: anteprima ed
+# evidenziazione devono mostrare cio' che gli export produrranno.
+from .model import (classify_md_line, parse_inline, inline_spans,
+                    wrapped_runs, unwrap_hard_breaks)
 from .i18n import (Translator, LANGUAGES, available_languages,
-                   ensure_language_files, spell_locale_for, SPELL_LOCALES,
-                   COMPLETE_LANGUAGES)
+                   ensure_language_files, spell_locale_for,
+                   RTL_LANGUAGES, COMPLETE_LANGUAGES)
 
 APP_ID = "org.ruscalinux.RuscaWriter"
 # Indirizzi pubblici del progetto, mostrati nel dialogo Informazioni.
@@ -161,11 +176,21 @@ APP_SOURCE = "https://github.com/ruscalinux-dev/ruscawriter"
 #     dei mesi tradotti (chiavi "month_1"..."month_12") e il pattern
 #     "date_format" nei file di lingua; in mancanza, si ripiega sull'inglese
 #     e infine sull'ISO.
-APP_DATE = (2026, 7, 4)
+#     La data NON si scrive piu' qui: arriva da model.APP_RELEASE_DATE, che e'
+#     l'unico posto da aggiornare a ogni rilascio.
+#     The date is NOT written here any more: it comes from
+#     model.APP_RELEASE_DATE, the single place to update at each release.
+APP_DATE = APP_RELEASE_DATE
+
 # EN/IT: fallback strings (only if translated month keys are missing) /
-# stringhe di riserva (usate solo se mancano le chiavi tradotte dei mesi)
-APP_DATE_IT = "4 Luglio 2026"
-APP_DATE_EN = "July 4, 2026"
+# stringhe di riserva (usate solo se mancano le chiavi tradotte dei mesi).
+# Composte dalla data, cosi' non vanno piu' aggiornate a mano.
+_MONTHS_IT = ("Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+              "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre")
+_MONTHS_EN = ("January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December")
+APP_DATE_IT = "%d %s %d" % (APP_DATE[2], _MONTHS_IT[APP_DATE[1] - 1], APP_DATE[0])
+APP_DATE_EN = "%s %d, %d" % (_MONTHS_EN[APP_DATE[1] - 1], APP_DATE[2], APP_DATE[0])
 
 ICON_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
@@ -283,6 +308,62 @@ LEFT_FRAC   = 0.20
 RIGHT_FRAC  = 0.22
 LEFT_MIN_PX  = 180
 RIGHT_MIN_PX = 200
+# EN: the centre column is what the program is for. Left and right were each
+#     capped at 40% of the width, but INDEPENDENTLY: together they could take
+#     80% and squeeze the writing area into a sliver. This is the floor the
+#     text keeps, whatever the side columns ask for.
+# IT: la colonna centrale e' il motivo per cui il programma esiste. Sinistra e
+#     destra erano capate ciascuna al 40% della larghezza, ma in modo
+#     INDIPENDENTE: insieme potevano prendersene l'80% e ridurre l'area di
+#     scrittura a una fessura. Questo e' il minimo che il testo conserva,
+#     qualunque cosa chiedano le colonne laterali.
+CENTER_MIN_PX = 360
+
+
+def split_columns(total, left_px=None, right_px=None,
+                  left_visible=True, right_visible=True):
+    """Larghezza delle tre colonne, dato lo spazio disponibile.
+
+    Restituisce (sinistra, centro, destra) in pixel. Sta fuori dal widget di
+    proposito: cosi' la regola si prova con dei numeri, senza aver bisogno di
+    una finestra vera, ed e' li' che si era nascosto l'errore.
+
+    La regola: le colonne laterali chiedono, la centrale decide. Se insieme
+    lascerebbero al testo meno di CENTER_MIN_PX, le laterali si restringono in
+    proporzione. Su una finestra troppo stretta perche' il minimo stia in
+    piedi, si cede anche su quello, ma sempre a partire dai lati.
+    """
+    if total <= 1:
+        return (0, max(0, total), 0)
+
+    left_w = 0
+    if left_visible:
+        left_w = max(LEFT_MIN_PX,
+                     min(left_px or int(total * LEFT_FRAC), int(total * 0.4)))
+    right_w = 0
+    if right_visible:
+        right_w = max(RIGHT_MIN_PX,
+                      min(right_px or int(total * RIGHT_FRAC), int(total * 0.4)))
+
+    minimo = min(CENTER_MIN_PX, max(1, total - LEFT_MIN_PX - RIGHT_MIN_PX))
+    centro = total - left_w - right_w
+    if centro < minimo and (left_w + right_w) > 0:
+        da_togliere = minimo - centro
+        somma = left_w + right_w
+        if left_w:
+            left_w = max(LEFT_MIN_PX,
+                         left_w - int(da_togliere * left_w / somma) - 1)
+        if right_w:
+            right_w = max(RIGHT_MIN_PX,
+                          right_w - int(da_togliere * right_w / somma) - 1)
+        # finestra molto stretta: si cede anche sui minimi laterali
+        eccesso = (total - left_w - right_w) - minimo
+        if eccesso < 0 and right_w:
+            right_w = max(0, right_w + eccesso)
+        eccesso = (total - left_w - right_w) - minimo
+        if eccesso < 0 and left_w:
+            left_w = max(0, left_w + eccesso)
+    return (left_w, total - left_w - right_w, right_w)
 READING_MAX_PX = 980
 
 
@@ -295,6 +376,93 @@ def _config_path():
     except Exception:
         pass
     return os.path.join(d, "settings.json")
+
+
+ESEMPIO_TEMA = """\
+# ---------------------------------------------------------------------------
+# Come si scrive un tema per RuscaWriter
+#
+# Copia questo file, chiamalo come vuoi purche' finisca in .theme
+# (per esempio  verde.theme )  e mettilo in questa stessa cartella.
+# Riavvia RuscaWriter: il tema comparira' in  Visualizza -> Tema.
+#
+# Servono un nome e sette colori, uno per riga, nella forma  chiave = #RRGGBB
+# Le righe vuote e quelle che iniziano con # sono note come questa.
+# Tutto il resto dell'interfaccia (lino, avorio, grafite) e' gia' pronto:
+# questi sette colori sono la tinta che lo attraversa.
+#
+# Ogni tema vale sia in chiaro sia in scuro: la versione chiara e quella scura
+# si costruiscono da soli a partire da questi colori.
+# ---------------------------------------------------------------------------
+
+# Il nome che vedrai nel menu
+nome = Standard verde
+
+# Il colore principale: barre, pulsanti, testo selezionato
+accento        = #2E7D4F
+
+# Una versione piu' scura: titoli e scritte sul chiaro
+accento-scuro  = #1B5233
+
+# Una versione molto chiara: sfumature e sfondi tenui
+accento-chiaro = #C7E3D3
+
+# Una versione luminosa: si usa sul fondo scuro, dove il colore pieno sparirebbe
+accento-acceso = #8FD3AC
+
+# Il colore del testo a spaziatura fissa (i `backtick` del Markdown)
+codice         = #2A6B48
+
+# Il velo che segnala i paragrafi spezzati, nel tema chiaro
+velo-chiaro    = #E4F2E9
+
+# Lo stesso velo, nel tema scuro
+velo-scuro     = #23372C
+
+# Consiglio: scegli accento e accento-scuro abbastanza carichi da leggere il
+# bianco sopra, e accento-acceso abbastanza chiaro da leggersi sul grafite.
+#
+# Se invece vuoi un accento CHIARO (barre grigie o pastello, come nel tema
+# Standard), aggiungi queste due righe, altrimenti il testo bianco sopra le
+# barre sparirebbe:
+#
+#   testo-su-accento = #26231F     il colore del testo sulle barre
+#   testo            = #3A3632     titoli, nomi dei capitoli, barra di stato
+#
+# Puoi anche cambiare la CARTA e il fondo, che sono meta' del carattere di un
+# tema. Se non li indichi valgono quelli di Quiete. Un consiglio: niente
+# bianco pieno e niente nero pieno — il primo abbaglia, il secondo fa sbordare
+# le lettere. Il testo sta bene fra 12:1 e 14:1 di contrasto.
+#
+#   carta        = #FBF7F0     l'area di scrittura, tema chiaro
+#   pannelli     = #F2EBE0     le colonne laterali
+#   inchiostro   = #2E2822     il testo sul chiaro
+#   fondo-scuro  = #171A21     lo sfondo del tema scuro
+#   carta-scura  = #131519     l'area di scrittura, tema scuro
+#   testo-scuro  = #DCD5C8     il testo sullo scuro
+#
+# Le fasce dell'interfaccia possono restare neutre mentre il colore resta
+# sulla sola selezione — e' cosi' che sono fatti Quiete e Velluto:
+#
+#   fasce = #F2EBE0    menu = #F2EBE0    testo-fasce = #2E2822
+"""
+
+
+def _themes_dir():
+    """Cartella dei temi dell'utente, accanto alle impostazioni.
+    Alla prima esecuzione ci si trova un file di esempio, commentato riga per
+    riga, da copiare e modificare."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    d = os.path.join(base, "ruscawriter", "themes")
+    try:
+        os.makedirs(d, exist_ok=True)
+        esempio = os.path.join(d, "ESEMPIO-copiami.txt")
+        if not os.path.exists(esempio):
+            with open(esempio, "w", encoding="utf-8") as f:
+                f.write(ESEMPIO_TEMA)
+    except Exception:
+        pass
+    return d
 
 
 def load_settings():
@@ -506,6 +674,21 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         w = self.settings.get("win_w", 1200)
         h = self.settings.get("win_h", 760)
         self.set_default_size(w, h)
+        # EN: a maximised window must come back maximised. Without this, its
+        #     size was saved WHILE maximised and restored as an ordinary window
+        #     of screen size — spilling under the taskbar, with the window
+        #     buttons off the edge. See _on_size_changed: the size is now only
+        #     recorded when the window is not maximised, so the value kept is
+        #     the one to return to.
+        # IT: una finestra massimizzata deve riaprirsi massimizzata. Senza
+        #     questo, le sue dimensioni venivano salvate MENTRE era
+        #     massimizzata e ripristinate come finestra normale grande quanto
+        #     lo schermo: sbordava sotto la barra delle applicazioni e i
+        #     pulsanti finivano fuori. Vedi _on_size_changed: le dimensioni si
+        #     registrano solo quando NON e' massimizzata, così il valore
+        #     conservato e' quello a cui tornare.
+        if self.settings.get("win_maximized"):
+            self.maximize()
 
         ensure_language_files()
         sys_lang = detect_system_language()
@@ -524,6 +707,10 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self.font_available = register_bundled_font()
         self.font_size = int(self.settings.get("font_size", DEFAULT_FONT_SIZE))
         self.font_size = max(MIN_FONT_SIZE, min(self.font_size, MAX_FONT_SIZE))
+        # Carattere dei documenti ESPORTATI. Vuoto = comportamento predefinito
+        # (il serif da lettura incorporato). Puo' essere il nome di una
+        # famiglia installata sulla macchina.
+        self.doc_font = self.settings.get("doc_font", "")
         self.font_family = self.settings.get(
             "font_family",
             TYPEWRITER_FAMILY if self.font_available else "Monospace")
@@ -539,6 +726,30 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
 
         self.theme_pref = self.settings.get("theme", "auto")
         self.dark_mode = self._resolve_dark(self.theme_pref)
+        # Famiglia di colori dell'interfaccia: "rusca" (prugna, abbinato a
+        # RuscaLinux) oppure "standard" (neutro, ispirato a Scrivener). E'
+        # indipendente da chiaro/scuro: ogni famiglia ha entrambe le versioni.
+        # Un valore salvato non piu' valido ripiega sul predefinito.
+        # Temi dell'utente: si leggono PRIMA di scegliere quale applicare,
+        # altrimenti un tema personalizzato salvato nelle impostazioni non
+        # risulterebbe ancora valido e si ripiegherebbe sul predefinito.
+        self.themes_dir = _themes_dir()
+        temi_utente, self._theme_errors = load_user_themes(self.themes_dir)
+        register_user_themes(temi_utente)
+        # resolve_theme traduce anche i codici dei temi vecchi, così chi aveva
+        # una variante non piu' esistente si ritrova sullo Standard e non
+        # rimbalza sul predefinito senza spiegazione.
+        self.theme_family = resolve_theme(
+            self.settings.get("theme_family", DEFAULT_THEME))
+        # Vista "Mostra le interruzioni": tinge i paragrafi spezzati a colonna
+        # fissa. Non modifica il testo, si limita a farlo vedere.
+        self.show_breaks = bool(self.settings.get("show_breaks", False))
+        # Ricucitura automatica all'importazione: SPENTA di partenza. Modifica
+        # il testo di chi scrive, quindi non si accende da sola: si attiva dal
+        # menu, e da quel momento RuscaWriter ricuce i file importati senza
+        # chiedere altro. Chi non la accende puo' sempre usare il comando
+        # manuale su un capitolo alla volta.
+        self.reflow_on_import = bool(self.settings.get("reflow_on_import", False))
         self._is_fullscreen = False
 
         # ultimo formato pagina PDF usato (ricordato tra le sessioni); se il
@@ -546,6 +757,16 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         saved_size = self.settings.get("pdf_page_size", PDF_DEFAULT_PAGE_SIZE)
         self._pdf_page_size = (saved_size if saved_size in PDF_PAGE_SIZES
                                else PDF_DEFAULT_PAGE_SIZE)
+
+        # preferenze di impaginazione PDF ricordate tra le sessioni:
+        # giustificazione del testo e sillabazione. La sillabazione richiede il
+        # pacchetto opzionale Pyphen E un dizionario per la lingua (su Debian
+        # un pacchetto hyphen-<lingua>): se manca l'uno o l'altro la teniamo
+        # sempre a False, a prescindere da cio' che e' salvato.
+        self._pdf_justify = bool(self.settings.get("pdf_justify", False))
+        self._pdf_hyphenate = bool(
+            self.settings.get("pdf_hyphenate", False)) and hyphenation_available(
+                getattr(self, "lang", "it"))
 
         # Evita che gli entry/spinbutton selezionino tutto il testo quando
         # ricevono il focus (in GTK 4 e' il comportamento predefinito): senza
@@ -561,6 +782,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self._build_actions()
         self._build_ui()
         self._apply_editor_font()
+        # orienta l'area di scrittura fin dall'avvio, non solo al cambio lingua
+        self._apply_text_direction()
         # prepara le liste di elisione di Enchant PRIMA di creare il checker,
         # cosi' libspelling le trova gia' pronte (vedi ensure_elision_dictionaries)
         self._ensure_elision_for_spell()
@@ -570,16 +793,27 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self.connect("close-request", self.on_close_request)
         self.connect("notify::default-width", self._on_size_changed)
         self.connect("notify::default-height", self._on_size_changed)
+        self.connect("notify::maximized", self._on_size_changed)
         self.connect("notify::fullscreened", self._on_fullscreen_changed)
 
         GLib.idle_add(self._apply_layout)
         GLib.idle_add(self._finish_restore)
         GLib.idle_add(self._startup_dialog)
+        # Se un file di tema e' scritto male, dirlo: chi l'ha appena creato
+        # deve sapere perche' non compare nel menu.
+        if getattr(self, "_theme_errors", None):
+            GLib.idle_add(self._report_theme_errors)
         # All'apertura, dai il focus all'area di scrittura: senza questo il
         # primo widget focusabile (lo SpinButton del font) riceverebbe il focus
         # e mostrerebbe il numero "14" tutto selezionato/evidenziato.
         GLib.idle_add(self._focus_editor)
         self._autosave_id = GLib.timeout_add_seconds(60, self._autosave_tick)
+
+    def _report_theme_errors(self):
+        self._error(self.t("theme_file_errors",
+                           e="\n".join(self._theme_errors)))
+        self._theme_errors = []
+        return False
 
     def _focus_editor(self):
         try:
@@ -733,10 +967,50 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             return False
         return self._system_prefers_dark()
 
+    def palette(self):
+        """Tavolozza corrente: famiglia di tema + chiaro/scuro.
+
+        Unico punto da cui l'interfaccia prende i colori (compresi quelli dei
+        titoli Markdown nell'editor), così le quattro combinazioni restano
+        coerenti fra loro."""
+        return theme_palette(getattr(self, "theme_family", DEFAULT_THEME),
+                             getattr(self, "dark_mode", False))
+
+    def theme_label(self, code):
+        """Nome da mostrare nel menu: tradotto per i temi incorporati, letto
+        dal file per quelli dell'utente.
+
+        Davanti al nome va il pallino del colore, dove c'e'. Le etichette dei
+        menu GTK sono testo semplice — non si possono colorare voce per voce —
+        quindi il colore entra come carattere, non come tinta dell'etichetta."""
+        nome = model_theme_label(code, translate=self._t_or)
+        pallino = pw_model.theme_dot(code)
+        return f"{pallino}  {nome}" if pallino else nome
+
+    def _sync_switch(self, nome, attivo):
+        """Riallinea la spunta di un interruttore nel menu al suo valore
+        vero. Va chiamata a ogni cambio, o la spunta e la realta' divergono."""
+        act = getattr(self, "_switch_actions", {}).get(nome)
+        if act is not None:
+            act.set_state(GLib.Variant.new_boolean(bool(attivo)))
+
     def on_toggle_dark(self, *_):
         self.dark_mode = not self.dark_mode
         self.theme_pref = "dark" if self.dark_mode else "light"
         self.settings["theme"] = self.theme_pref
+        save_settings(self.settings)
+        self._sync_switch("dark", self.dark_mode)
+        self._apply_css()
+        self._update_tag_colors()
+
+    def on_theme_family(self, code):
+        """Cambia famiglia di colori (prugna RuscaLinux / Standard) senza
+        toccare la preferenza chiaro-scuro, che resta com'era."""
+        if (code not in pw_model.THEMES
+                or code == getattr(self, "theme_family", None)):
+            return
+        self.theme_family = code
+        self.settings["theme_family"] = code
         save_settings(self.settings)
         self._apply_css()
         self._update_tag_colors()
@@ -749,7 +1023,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
                 Gtk.StyleContext.add_provider_for_display(
                     display, self._theme_provider,
                     Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        css = build_css(dark=getattr(self, "dark_mode", False))
+        css = build_css(dark=getattr(self, "dark_mode", False),
+                        theme=getattr(self, "theme_family", DEFAULT_THEME))
         try:
             self._theme_provider.load_from_data(css.encode("utf-8"))
         except Exception:
@@ -1045,29 +1320,51 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self._set_font_size(self.font_size - 1)
         return True
 
-    def _apply_layout(self):
+    def _apply_layout(self, _retries=0):
         # La visibilita' dei pannelli va impostata SEMPRE, anche se la larghezza
         # non e' ancora nota (durante le transizioni fullscreen puo' essere <=1):
         # altrimenti, uscendo dalla modalita' concentrazione, i pannelli non
         # riapparirebbero.
         self.left_panel.set_visible(self.left_visible)
         self.right_panel.set_visible(self.right_visible)
-        total = self._content_width()
+        # EN: only move the dividers once the window really has a width. At
+        #     startup this runs before the first allocation, and positioning an
+        #     unallocated GtkPaned makes GTK complain that it is being asked to
+        #     draw a part that has no size yet. Retry on the next idle turn
+        #     instead of guessing; after a while, fall back to the saved width
+        #     so a window that never gets allocated still opens usably.
+        # IT: sposta i separatori solo quando la finestra ha davvero una
+        #     larghezza. All'avvio questo metodo parte prima della prima
+        #     allocazione, e posizionare un GtkPaned non ancora allocato fa
+        #     protestare GTK, che si trova a disegnare una parte senza misure.
+        #     Invece di indovinare si riprova al giro successivo; dopo un po'
+        #     si ripiega sulla larghezza salvata, così una finestra che non
+        #     venisse mai allocata si aprirebbe comunque in modo utilizzabile.
+        allocated = self.paned_outer.get_allocated_width()
+        if allocated <= 1:
+            if _retries < 20:
+                GLib.idle_add(self._apply_layout, _retries + 1)
+                return False
+            total = self._content_width()
+        else:
+            total = allocated
         if total <= 1:
             return False
-        if not self.left_visible:
-            left_w = 0
-        else:
-            left_w = self.settings.get("left_px") or int(total * LEFT_FRAC)
-            left_w = max(LEFT_MIN_PX, min(left_w, int(total * 0.4)))
-        if not self.right_visible:
-            right_w = 0
-        else:
-            right_w = self.settings.get("right_px") or int(total * RIGHT_FRAC)
-            right_w = max(RIGHT_MIN_PX, min(right_w, int(total * 0.4)))
+        left_w, _centro, right_w = split_columns(
+            total,
+            self.settings.get("left_px"), self.settings.get("right_px"),
+            self.left_visible, self.right_visible)
+
         self.paned_outer.set_position(left_w)
         inner_w = max(1, total - left_w)
-        self.paned_inner.set_position(inner_w - right_w)
+        self.paned_inner.set_position(max(0, inner_w - right_w))
+        # I margini di lettura dipendono dalla larghezza dell'AREA DI
+        # SCRITTURA, che cambia proprio adesso: si ricalcolano al giro
+        # successivo, quando GTK ha applicato le posizioni appena chieste.
+        # Senza questo restavano quelli calcolati prima che i pannelli
+        # togliessero spazio al centro, e il testo usciva incolonnato
+        # stretto in mezzo a due margini enormi.
+        GLib.idle_add(self._update_reading_margins)
         return False
 
     def _block_file_drops_on_editor(self):
@@ -1138,6 +1435,9 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             title = os.path.splitext(os.path.basename(path))[0]
             last_ch = self.project.add_chapter_from_text(raw, title=title)
             added += 1
+        if added and self.reflow_on_import:
+            # la preferenza e' accesa: ricuci i capitoli appena importati
+            self.project.rejoin_paragraphs()
         if added:
             # seleziona l'ultimo capitolo importato
             idx = self.project.chapters.index(last_ch) if last_ch else 0
@@ -1148,10 +1448,14 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             self._error(self.t("import_skipped", files=", ".join(skipped)))
         return added
 
-    def _update_reading_margins(self):
+    def _update_reading_margins(self, _tentativi=0):
         w = self.text_view.get_allocated_width()
         if w <= 1:
-            return
+            # non ancora allocata: si riprova, invece di fissare un margine
+            # su una misura che non esiste
+            if _tentativi < 20:
+                GLib.idle_add(self._update_reading_margins, _tentativi + 1)
+            return False
         # limita la larghezza della colonna di scrittura per comodita' di lettura
         # e la centra quando l'area e' molto piu' larga del massimo di lettura
         if w > READING_MAX_PX + 40:
@@ -1162,11 +1466,21 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             self._last_side = side
             self.text_view.set_left_margin(side)
             self.text_view.set_right_margin(side)
+        return False
 
-    def on_divider_moved(self, paned, _param):
+    def on_divider_moved(self, _paned, _param):
         if self._restoring:
             return
-        total = self._content_width()
+        # Si registra solo quando la finestra ha una larghezza VERA. Prima
+        # bastava _content_width(), che quando l'allocazione manca ripiega
+        # sulla larghezza salvata: durante l'avvio venivano cosi' memorizzate
+        # posizioni prese da una finestra che non esisteva ancora, e al
+        # riavvio successivo le colonne ripartivano storte — un errore che si
+        # ricopiava da solo di sessione in sessione.
+        # I margini seguono comunque il divisore: e' l'unica cosa che
+        # conta anche prima che la finestra abbia una larghezza definitiva.
+        self._update_reading_margins()
+        total = self.paned_outer.get_allocated_width()
         if total <= 1:
             return
         left_w = self.paned_outer.get_position()
@@ -1181,12 +1495,18 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
 
     def _on_size_changed(self, *_):
         if not self._restoring:
-            w = self.get_width()
-            h = self.get_height()
-            if w > 1:
-                self.settings["win_w"] = w
-            if h > 1:
-                self.settings["win_h"] = h
+            massimizzata = self.is_maximized()
+            self.settings["win_maximized"] = bool(massimizzata)
+            # Le dimensioni si registrano solo a finestra normale: quelle di
+            # una massimizzata non sono una misura a cui tornare, sono lo
+            # schermo.
+            if not massimizzata:
+                w = self.get_width()
+                h = self.get_height()
+                if w > 1:
+                    self.settings["win_w"] = w
+                if h > 1:
+                    self.settings["win_h"] = h
         self._update_reading_margins()
 
     def _persist_layout(self):
@@ -1252,6 +1572,10 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             ("up",           self.on_move_up,        ["<Control><Shift>Up"]),
             ("down",         self.on_move_down,      ["<Control><Shift>Down"]),
             ("find",         self.on_find_replace,   ["<Control>f"]),
+            # EN/IT: manual paragraph re-flow, and the view that shows where
+            # the hard-wrapped paragraphs are.
+            ("reflow",       self.on_reflow_paragraphs, []),
+            ("choose_font",  self.on_choose_font,     []),
             # EN: attach an image (PNG/JPEG/WebP) into the current chapter
             # IT: allega un'immagine (PNG/JPEG/WebP) nel capitolo corrente
             ("insert_image", self.on_insert_image,   ["<Control><Shift>i"]),
@@ -1264,10 +1588,11 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
              ["<Control>minus", "<Control>KP_Subtract"]),
             ("preview",      self.on_toggle_preview, ["<Control>e"]),
             ("preview_all",  self.on_toggle_preview_whole, ["<Control><Shift>e"]),
-            ("dark",         self.on_toggle_dark,    ["<Control><Shift>d"]),
             ("goal",         self.on_set_goal,       []),
             ("about",        self.on_info,           ["F1"]),
+            ("md_help",      self.on_md_help,        ["<Shift>F1"]),
         ]
+        self._switch_actions = {}
         for name, handler, accels in simple:
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, h=handler: h())
@@ -1275,16 +1600,67 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             if accels:
                 self.app.set_accels_for_action("win." + name, accels)
 
+        # EN/IT: switches, not commands. A stateful boolean action makes GTK
+        # draw a tick beside the entry, so the menu says whether the dark theme
+        # is on instead of always reading the same. A plain action cannot: it
+        # has no state to show.
+        # Interruttori, non comandi. Un'azione booleana "con stato" fa
+        # disegnare a GTK la spunta accanto alla voce, così il menu dice se il
+        # tema scuro e' acceso invece di leggersi sempre uguale. Un'azione
+        # semplice non puo': non ha uno stato da mostrare.
+        for nome, attivo, gestore, accels in (
+                ("dark", self.dark_mode, self.on_toggle_dark,
+                 ["<Control><Shift>d"]),
+                ("show_breaks", self.show_breaks, self.on_toggle_show_breaks,
+                 ["<Control><Shift>b"])):
+            act = Gio.SimpleAction.new_stateful(
+                nome, None, GLib.Variant.new_boolean(bool(attivo)))
+            act.connect("activate", lambda a, p, h=gestore: h())
+            self.add_action(act)
+            self.app.set_accels_for_action("win." + nome, accels)
+            self._switch_actions[nome] = act
+
         lang_act = Gio.SimpleAction.new_stateful(
             "ui_lang", GLib.VariantType.new("s"), GLib.Variant("s", self.lang))
         lang_act.connect("activate", self._on_lang_action)
         self.add_action(lang_act)
         self._lang_action = lang_act
 
+        # Famiglia di tema: azione "con stato", come la lingua, cosi' il menu
+        # mostra il pallino accanto alla voce attiva.
+        theme_act = Gio.SimpleAction.new_stateful(
+            "theme_family", GLib.VariantType.new("s"),
+            GLib.Variant("s", self.theme_family))
+        theme_act.connect("activate", self._on_theme_family_action)
+        self.add_action(theme_act)
+        self._theme_action = theme_act
+
+        # Ricucitura automatica: azione booleana, cosi' il menu mostra la
+        # spunta e si vede a colpo d'occhio se e' attiva.
+        reflow_act = Gio.SimpleAction.new_stateful(
+            "reflow_auto", None,
+            GLib.Variant.new_boolean(self.reflow_on_import))
+        reflow_act.connect("activate", self._on_reflow_auto_action)
+        self.add_action(reflow_act)
+        self._reflow_action = reflow_act
+
+    def _on_reflow_auto_action(self, action, _param):
+        self.reflow_on_import = not self.reflow_on_import
+        action.set_state(GLib.Variant.new_boolean(self.reflow_on_import))
+        self.settings["reflow_on_import"] = self.reflow_on_import
+        save_settings(self.settings)
+        self._info(self.t("reflow_auto_on") if self.reflow_on_import
+                   else self.t("reflow_auto_off"))
+
     def _on_lang_action(self, action, param):
         code = param.get_string()
         action.set_state(param)
         self.on_ui_lang_changed(code)
+
+    def _on_theme_family_action(self, action, param):
+        code = param.get_string()
+        action.set_state(param)
+        self.on_theme_family(code)
 
     def _build_menu_model(self):
         menubar = Gio.Menu()
@@ -1321,6 +1697,10 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         m_edit.append_section(None, s2)
         s3 = Gio.Menu()
         s3.append(self.t("mi_find"), "win.find")
+        s3.append(self._t_or("mi_reflow", "Ricuci i paragrafi"), "win.reflow")
+        s3.append(self._t_or("mi_reflow_auto",
+                             "Ricuci automaticamente i testi importati"),
+                  "win.reflow_auto")
         m_edit.append_section(None, s3)
         s4 = Gio.Menu()
         s4.append(self.t("mi_insert_image"), "win.insert_image")
@@ -1342,7 +1722,20 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         v4 = Gio.Menu()
         v4.append(self.t("mi_preview"), "win.preview")
         v4.append(self.t("mi_preview_all"), "win.preview_all")
+        v4.append(self._t_or("mi_show_breaks", "Mostra le interruzioni"),
+                  "win.show_breaks")
         v4.append(self.t("mi_dark"), "win.dark")
+        # Sottomenu tema: sceglie la FAMIGLIA di colori (prugna RuscaLinux o
+        # Standard ispirato a Scrivener). Il chiaro/scuro resta la voce sopra:
+        # le due scelte sono indipendenti e si combinano.
+        m_theme = Gio.Menu()
+        for code in pw_model.THEMES:
+            item = Gio.MenuItem.new(self.theme_label(code), None)
+            item.set_action_and_target_value(
+                "win.theme_family", GLib.Variant("s", code))
+            m_theme.append_item(item)
+        v4.append_submenu(self._t_or("mi_theme", "Tema"), m_theme)
+        v4.append(self._t_or("mi_font", "Caratteri…"), "win.choose_font")
         v4.append(self.t("mi_goal"), "win.goal")
         m_view.append_section(None, v4)
         # Sottomenu lingua: prima le lingue tradotte per intero, poi (in una
@@ -1351,7 +1744,22 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         m_lang = Gio.Menu()
         complete_sec = Gio.Menu()
         partial_sec = Gio.Menu()
-        not_translated = self.t("lang_untranslated")
+        # EN: for a language whose interface is not translated yet, say what
+        #     the choice DOES rather than only what it lacks: the interface
+        #     stays in English, but the PDF hyphenation dictionary follows the
+        #     language — which in a book-making program is not a detail.
+        #     Only 15 of the 33 have a dictionary, so the entry is checked one
+        #     by one instead of promising the same to everybody.
+        # IT: per una lingua la cui interfaccia non e' ancora tradotta, dire
+        #     cosa la scelta FA invece che solo cosa le manca: l'interfaccia
+        #     resta in inglese, ma il dizionario di sillabazione del PDF segue
+        #     la lingua — e in un programma da libri non e' un dettaglio.
+        #     Solo 15 delle 33 hanno un dizionario, quindi la voce si controlla
+        #     una per una invece di promettere a tutte la stessa cosa.
+        solo_inglese = self._t_or("lang_english_ui", "interfaccia in inglese")
+        con_sillabazione = self._t_or(
+            "lang_english_ui_hyph",
+            "interfaccia in inglese, sillabazione disponibile")
         for code, native in available_languages():
             if code in COMPLETE_LANGUAGES:
                 item = Gio.MenuItem.new(native, None)
@@ -1359,7 +1767,9 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
                     "win.ui_lang", GLib.Variant("s", code))
                 complete_sec.append_item(item)
             else:
-                label = f"{native} — {not_translated}"
+                nota = (con_sillabazione if hyphenation_available(code)
+                        else solo_inglese)
+                label = f"{native} — {nota}"
                 item = Gio.MenuItem.new(label, None)
                 item.set_action_and_target_value(
                     "win.ui_lang", GLib.Variant("s", code))
@@ -1370,6 +1780,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         menubar.append_submenu(self.t("menu_view"), m_view)
 
         m_help = Gio.Menu()
+        m_help.append(self._t_or("mi_md_help", "Guida ai comandi Markdown"),
+                      "win.md_help")
         m_help.append(self.t("mi_about"), "win.about")
         menubar.append_submenu(self.t("menu_help"), m_help)
         return menubar
@@ -1521,7 +1933,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self.text_view.add_css_class("text-editor")
         self.text_view.set_top_margin(16)
         self.text_view.set_bottom_margin(16)
-        head_color = PLUM_GLOW if getattr(self, "dark_mode", False) else PLUM_DARK
+        pal = self.palette()
+        head_color = pal["head"]
         self._md_tags = {
             "h1": self.text_buffer.create_tag("h1", weight=Pango.Weight.BOLD,
                                               scale=1.6, foreground=head_color),
@@ -1534,9 +1947,14 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             "bolditalic": self.text_buffer.create_tag(
                 "bolditalic", weight=Pango.Weight.BOLD, style=Pango.Style.ITALIC),
             "code": self.text_buffer.create_tag(
-                "code", family="monospace",
-                foreground=PLUM_GLOW if getattr(self, "dark_mode", False) else "#7A3B72"),
-            "marker": self.text_buffer.create_tag("marker", foreground=PLUM_LIGHT),
+                "code", family="monospace", foreground=pal["code"]),
+            "marker": self.text_buffer.create_tag("marker",
+                                                  foreground=pal["marker"]),
+            # Tinge le righe che il comando "Ricuci i paragrafi" unirebbe.
+            # paragraph-background colora la riga per tutta la sua larghezza,
+            # cosi' la spezzatura si vede anche dove il testo finisce prima.
+            "wrapmark": self.text_buffer.create_tag(
+                "wrapmark", paragraph_background=pal["wrapmark"]),
         }
         self.text_buffer.connect("changed", self.on_text_changed)
         self._block_file_drops_on_editor()
@@ -1557,7 +1975,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self.preview_view.set_top_margin(12)
         self.preview_view.add_css_class("text-editor")
         self.preview_buffer = self.preview_view.get_buffer()
-        head_color = PLUM_GLOW if getattr(self, "dark_mode", False) else PLUM_DARK
+        head_color = self.palette()["head"]
         self._pv_tags = {
             "h1": self.preview_buffer.create_tag("h1", weight=Pango.Weight.BOLD,
                                                  scale=1.7, foreground=head_color),
@@ -1653,7 +2071,10 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         label.set_text(item.get_string())
 
     def _update_tag_colors(self):
-        head_color = PLUM_GLOW if self.dark_mode else PLUM_DARK
+        """Riallinea i colori del testo Markdown alla tavolozza corrente.
+        Chiamata a ogni cambio di famiglia di tema e di chiaro/scuro."""
+        pal = self.palette()
+        head_color = pal["head"]
         for name in ("h1", "h2", "h3"):
             try:
                 self._md_tags[name].set_property("foreground", head_color)
@@ -1661,8 +2082,10 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             except Exception:
                 pass
         try:
-            self._md_tags["code"].set_property(
-                "foreground", PLUM_GLOW if self.dark_mode else "#7A3B72")
+            self._md_tags["code"].set_property("foreground", pal["code"])
+            self._md_tags["marker"].set_property("foreground", pal["marker"])
+            self._md_tags["wrapmark"].set_property("paragraph-background",
+                                                  pal["wrapmark"])
             self._pv_tags["quote"].set_property("foreground", head_color)
             self._pv_tags["sep"].set_property("foreground", head_color)
         except Exception:
@@ -1712,7 +2135,30 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         if hasattr(self, "spell_combo"):
             self._populate_spell_combo()
 
+    def _apply_text_direction(self):
+        """Orienta le aree di scrittura secondo la lingua dell'interfaccia.
+
+        Arabo, urdu, persiano ed ebraico si scrivono da destra a sinistra.
+        RTL_LANGUAGES lo dichiarava gia', ma nessuno lo leggeva: si potevano
+        scegliere quelle quattro lingue e ritrovarsi il cursore a sinistra e il
+        testo che partiva dal lato sbagliato.
+
+        NB: questo orienta l'AREA DI SCRITTURA. L'impaginatore PDF compone
+        ancora da sinistra a destra: per quelle lingue l'export non e' ancora
+        corretto, ed e' un lavoro a se'."""
+        verso = (Gtk.TextDirection.RTL if self.lang in RTL_LANGUAGES
+                 else Gtk.TextDirection.LTR)
+        for widget in (getattr(self, "text_view", None),
+                       getattr(self, "note_view", None),
+                       getattr(self, "preview_view", None)):
+            if widget is not None:
+                try:
+                    widget.set_direction(verso)
+                except Exception:
+                    pass   # l'orientamento non deve mai impedire di scrivere
+
     def _retranslate(self):
+        self._apply_text_direction()
         self._rebuild_menubar()
         try:
             self._lang_action.set_state(GLib.Variant("s", self.lang))
@@ -1778,7 +2224,13 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self.text_buffer.set_text("")
         self.note_buffer.set_text("")
         self._loading = False
-        self.center_title.set_text(self.t("empty_hint"))
+        # La scia del menu ("Capitolo -> Aggiungi capitolo") non e' scritta a
+        # mano nella frase: arriva dalle voci di menu vere. Cosi' se un giorno
+        # una voce cambia nome, o viene tradotta, il suggerimento la segue e
+        # non puo' piu' indicare un comando che non esiste.
+        self.center_title.set_text(self.t("empty_hint",
+                                          menu=self.t("menu_edit"),
+                                          item=self.t("mi_add")))
         self._set_editing_enabled(False)
 
     def _set_editing_enabled(self, enabled):
@@ -1837,7 +2289,10 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             return idx
         return None
 
-    def on_select_chapter(self, selection, position=None, n_items=None):
+    # firma imposta dal segnale "selection-changed": i tre parametri
+    # arrivano da GTK e non servono, la selezione si rilegge dal modello
+    def on_select_chapter(self, _selection=None, _position=None,
+                          _n_items=None):
         if self._loading:
             return
         sel = self.list_selection.get_selected()
@@ -1918,7 +2373,9 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self._update_wordcount()
 
     def _highlight_markdown(self):
-        import re
+        """Colora il Markdown mentre si scrive. Usa le stesse regole degli
+        export (model.classify_md_line / model.inline_spans): ciò che qui
+        appare in grassetto uscirà in grassetto anche nel PDF."""
         buf = self.text_buffer
         start, end = buf.get_bounds()
         for tag in self._md_tags.values():
@@ -1926,34 +2383,33 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         text = buf.get_text(start, end, True)
 
         def apply(tag_name, a, b):
-            ia = buf.get_iter_at_offset(a)
-            ib = buf.get_iter_at_offset(b)
-            buf.apply_tag(self._md_tags[tag_name], ia, ib)
+            tag = self._md_tags.get(tag_name)
+            if tag is None:
+                return
+            buf.apply_tag(tag, buf.get_iter_at_offset(a),
+                          buf.get_iter_at_offset(b))
 
+        lines = text.split("\n")
         offset = 0
-        for line in text.split("\n"):
-            stripped = line.lstrip()
-            mh = re.match(r"^(#{1,6})\s+(.*)$", stripped)
-            if mh:
-                level = len(mh.group(1))
-                tag = "h1" if level == 1 else ("h2" if level == 2 else "h3")
-                apply(tag, offset, offset + len(line))
+        starts = []
+        for line in lines:
+            starts.append(offset)
+            kind, _body, extra = classify_md_line(line)
+            if kind == "heading":
+                apply(f"h{min(3, extra)}", offset, offset + len(line))
             else:
-                for mt in re.finditer(r"\*\*\*(.+?)\*\*\*|"
-                                      r"\*\*(.+?)\*\*|"
-                                      r"\*(.+?)\*|"
-                                      r"`(.+?)`", line):
-                    a = offset + mt.start()
-                    b = offset + mt.end()
-                    if mt.group(1) is not None:
-                        apply("bolditalic", a, b)
-                    elif mt.group(2) is not None:
-                        apply("bold", a, b)
-                    elif mt.group(3) is not None:
-                        apply("italic", a, b)
-                    else:
-                        apply("code", a, b)
+                for a, b, style in inline_spans(line):
+                    apply(style, offset + a, offset + b)
             offset += len(line) + 1
+
+        # Vista "Mostra le interruzioni": tinge i gruppi di righe che il
+        # comando di ricucitura unirebbe. Sono decisi da model.wrapped_runs,
+        # la stessa funzione che poi esegue l'unione: cio' che si vede
+        # evidenziato e' esattamente cio' che verrebbe toccato.
+        if getattr(self, "show_breaks", False):
+            for first, last in wrapped_runs(text):
+                apply("wrapmark", starts[first],
+                      starts[last] + len(lines[last]))
 
     def on_note_changed(self, buf):
         if self._loading or self.current is None:
@@ -1963,19 +2419,69 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self._mark_dirty()
 
     # ---- helper dialoghi asincroni -----------------------------------------
+    def _dialog_shell(self, title, size=None, spacing=12, margin=20):
+        """Costruisce la finestra di dialogo e il suo contenitore.
+
+        Tutti i dialoghi dell'applicazione — messaggi, conferme, sezioni
+        editoriali, informazioni, guida, formato pagina, avvio — hanno lo
+        stesso involucro: finestra modale figlia della principale, classe
+        "rusca-dialog" per il tema, contenitore verticale con la classe di
+        sfondo e margini uguali sui quattro lati. Sta scritto qui una volta,
+        così i margini restano coerenti fra un dialogo e l'altro.
+
+        Restituisce (finestra, contenitore): il chiamante riempie il
+        contenitore e chiude con _dialog_present()."""
+        dialog = Gtk.Window(transient_for=self, modal=True)
+        dialog.add_css_class("rusca-dialog")
+        dialog.set_title(title or "")
+        if size is None:
+            dialog.set_resizable(False)
+        else:
+            dialog.set_default_size(*size)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing)
+        box.set_margin_top(margin); box.set_margin_bottom(margin)
+        box.set_margin_start(margin); box.set_margin_end(margin)
+        box.add_css_class("rusca-bg")
+        return dialog, box
+
+    def _ok_cancel_row(self, box, on_ok, on_cancel=None):
+        """Aggiunge in fondo al dialogo la coppia Annulla / OK.
+
+        Tre dialoghi la ripetevano identica: stessa spaziatura, stesso
+        allineamento a destra, stessa classe sul pulsante principale. Sta qui
+        una volta, così restano uguali fra loro anche in futuro.
+
+        Restituisce il pulsante OK, che il chiamante passa a
+        _dialog_present() come predefinito."""
+        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                       halign=Gtk.Align.END)
+        b_cancel = Gtk.Button(label=self.t("cancel"))
+        b_ok = Gtk.Button(label=self.t("ok"))
+        b_ok.add_css_class("suggested-action")
+        btns.append(b_cancel)
+        btns.append(b_ok)
+        box.append(btns)
+        b_cancel.connect("clicked", on_cancel or (lambda *_a: None))
+        b_ok.connect("clicked", on_ok)
+        return b_ok
+
+    def _dialog_present(self, dialog, box, default_widget=None):
+        """Aggancia il contenitore, mostra il dialogo e gli da' il fuoco.
+        Chiusura speculare di _dialog_shell(): stessi tre passi ovunque."""
+        dialog.set_child(box)
+        if default_widget is not None:
+            dialog.set_default_widget(default_widget)
+        dialog.present()
+        GLib.idle_add(self._raise_dialog, dialog)
+        if default_widget is not None:
+            default_widget.grab_focus()
+
     def _message_dialog(self, title, body):
         """Mostra un messaggio in una finestra con il nostro tema (leggibile sia
         in chiaro sia in scuro). Sostituisce Gtk.AlertDialog, il cui testo del
         messaggio non e' raggiunto dal nostro CSS e nel tema scuro risulta poco
         leggibile."""
-        dialog = Gtk.Window(transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_title(title or "")
-        dialog.set_resizable(False)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(16); box.set_margin_bottom(16)
-        box.set_margin_start(20); box.set_margin_end(20)
-        box.add_css_class("rusca-bg")
+        dialog, box = self._dialog_shell(title, margin=18)
         if title:
             head = Gtk.Label()
             head.set_markup(f"<b>{GLib.markup_escape_text(title)}</b>")
@@ -1994,11 +2500,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         btn.set_halign(Gtk.Align.CENTER)
         btn.connect("clicked", lambda *_: dialog.destroy())
         box.append(btn)
-        dialog.set_child(box)
-        dialog.set_default_widget(btn)
-        dialog.present()
-        GLib.idle_add(self._raise_dialog, dialog)
-        btn.grab_focus()
+        self._dialog_present(dialog, box, btn)
 
     def _info(self, msg):
         self._message_dialog(None, msg)
@@ -2007,13 +2509,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         self._message_dialog(self.t("error_title"), msg)
 
     def _ask_text(self, title, prompt, initial, on_ok):
-        dialog = Gtk.Window(title=title, transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_default_size(360, -1)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(12); box.set_margin_bottom(12)
-        box.set_margin_start(12); box.set_margin_end(12)
-        box.add_css_class("rusca-bg")
+        dialog, box = self._dialog_shell(title, size=(360, -1),
+                                         spacing=8, margin=12)
         prompt_lbl = Gtk.Label(label=prompt, xalign=0)
         prompt_lbl.add_css_class("rusca-dialog-text")
         box.append(prompt_lbl)
@@ -2021,23 +2518,14 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         entry.set_text(initial or "")
         entry.set_activates_default(True)
         box.append(entry)
-        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
-                       halign=Gtk.Align.END)
-        b_cancel = Gtk.Button(label=self.t("cancel"))
-        b_ok = Gtk.Button(label=self.t("ok"))
-        b_ok.add_css_class("suggested-action")
-        btns.append(b_cancel); btns.append(b_ok)
-        box.append(btns)
-        dialog.set_child(box)
-        dialog.set_default_widget(b_ok)
-
         def confirm(*_):
             text = entry.get_text()
             dialog.destroy()
             on_ok(text)
 
-        b_cancel.connect("clicked", lambda *_: dialog.destroy())
-        b_ok.connect("clicked", confirm)
+        b_ok = self._ok_cancel_row(box, confirm, lambda *_: dialog.destroy())
+        dialog.set_child(box)
+        dialog.set_default_widget(b_ok)
         entry.connect("activate", confirm)
         dialog.present()
         entry.grab_focus()
@@ -2060,23 +2548,14 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         spin.set_numeric(True)
         spin.set_activates_default(True)
         box.append(spin)
-        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
-                       halign=Gtk.Align.END)
-        b_cancel = Gtk.Button(label=self.t("cancel"))
-        b_ok = Gtk.Button(label=self.t("ok"))
-        b_ok.add_css_class("suggested-action")
-        btns.append(b_cancel); btns.append(b_ok)
-        box.append(btns)
-        dialog.set_child(box)
-        dialog.set_default_widget(b_ok)
-
         def confirm(*_):
             val = int(spin.get_value())
             dialog.destroy()
             on_ok(val)
 
-        b_cancel.connect("clicked", lambda *_: dialog.destroy())
-        b_ok.connect("clicked", confirm)
+        b_ok = self._ok_cancel_row(box, confirm, lambda *_: dialog.destroy())
+        dialog.set_child(box)
+        dialog.set_default_widget(b_ok)
         dialog.present()
         spin.grab_focus()
 
@@ -2089,14 +2568,7 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         tramite GLib.idle_add: cosi' non viene eseguito dentro l'emissione di un
         segnale del dialogo (cosa che rendeva inaffidabile la chiusura della
         finestra principale)."""
-        dialog = Gtk.Window(transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_title(title or "")
-        dialog.set_resizable(False)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(16); box.set_margin_bottom(16)
-        box.set_margin_start(20); box.set_margin_end(20)
-        box.add_css_class("rusca-bg")
+        dialog, box = self._dialog_shell(title, margin=18)
         if title:
             head = Gtk.Label()
             head.set_markup(f"<b>{GLib.markup_escape_text(title)}</b>")
@@ -2150,15 +2622,24 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         if default_btn is not None:
             default_btn.grab_focus()
 
-    def _save_file_dialog(self, title, suggested_name, patterns, filter_name, on_path):
+    def _file_dialog(self, title, patterns, filter_name,
+                     suggested_name=None, multiple=False, on_result=None):
+        """Selettore di file: unico punto in cui si costruisce un Gtk.FileDialog.
+
+        I tre casi — salva, apri, apri piu' file — differiscono solo per il
+        metodo da chiamare e per quello che restituiscono; il titolo, il filtro
+        e la gestione dell'annullamento sono identici e stanno qui una volta
+        sola. La richiamata riceve un percorso, o una lista di percorsi se
+        multiple=True. Se l'utente annulla, non viene chiamata."""
         dialog = Gtk.FileDialog()
         dialog.set_title(title)
-        dialog.set_initial_name(suggested_name)
+        if suggested_name is not None:
+            dialog.set_initial_name(suggested_name)
         if patterns:
             flt = Gtk.FileFilter()
             flt.set_name(filter_name)
-            for p in patterns:
-                flt.add_pattern(p)
+            for pattern in patterns:
+                flt.add_pattern(pattern)
             filters = Gio.ListStore.new(Gtk.FileFilter)
             filters.append(flt)
             dialog.set_filters(filters)
@@ -2166,70 +2647,45 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
 
         def done(d, result):
             try:
-                gfile = d.save_finish(result)
+                answer = finish(d, result)
             except GLib.Error:
-                return
-            if gfile is not None:
-                on_path(gfile.get_path())
+                return          # l'utente ha annullato: nulla da fare
+            if multiple:
+                paths = []
+                for i in range(answer.get_n_items()):
+                    try:
+                        path = answer.get_item(i).get_path()
+                    except Exception:
+                        path = None
+                    if path:
+                        paths.append(path)
+                if paths:
+                    on_result(paths)
+            elif answer is not None:
+                on_result(answer.get_path())
 
-        dialog.save(self, None, done)
+        if suggested_name is not None:
+            finish = Gtk.FileDialog.save_finish
+            dialog.save(self, None, done)
+        elif multiple:
+            finish = Gtk.FileDialog.open_multiple_finish
+            dialog.open_multiple(self, None, done)
+        else:
+            finish = Gtk.FileDialog.open_finish
+            dialog.open(self, None, done)
+
+    def _save_file_dialog(self, title, suggested_name, patterns, filter_name, on_path):
+        self._file_dialog(title, patterns, filter_name,
+                          suggested_name=suggested_name or "", on_result=on_path)
 
     def _open_file_dialog(self, title, patterns, filter_name, on_path):
-        dialog = Gtk.FileDialog()
-        dialog.set_title(title)
-        if patterns:
-            flt = Gtk.FileFilter()
-            flt.set_name(filter_name)
-            for p in patterns:
-                flt.add_pattern(p)
-            filters = Gio.ListStore.new(Gtk.FileFilter)
-            filters.append(flt)
-            dialog.set_filters(filters)
-            dialog.set_default_filter(flt)
-
-        def done(d, result):
-            try:
-                gfile = d.open_finish(result)
-            except GLib.Error:
-                return
-            if gfile is not None:
-                on_path(gfile.get_path())
-
-        dialog.open(self, None, done)
+        self._file_dialog(title, patterns, filter_name, on_result=on_path)
 
     def _open_files_dialog(self, title, patterns, filter_name, on_paths):
         """Come _open_file_dialog ma permette di selezionare piu' file insieme;
         chiama on_paths(lista_di_percorsi)."""
-        dialog = Gtk.FileDialog()
-        dialog.set_title(title)
-        if patterns:
-            flt = Gtk.FileFilter()
-            flt.set_name(filter_name)
-            for p in patterns:
-                flt.add_pattern(p)
-            filters = Gio.ListStore.new(Gtk.FileFilter)
-            filters.append(flt)
-            dialog.set_filters(filters)
-            dialog.set_default_filter(flt)
-
-        def done(d, result):
-            try:
-                files = d.open_multiple_finish(result)
-            except GLib.Error:
-                return
-            paths = []
-            for i in range(files.get_n_items()):
-                gf = files.get_item(i)
-                try:
-                    p = gf.get_path()
-                except Exception:
-                    p = None
-                if p:
-                    paths.append(p)
-            if paths:
-                on_paths(paths)
-
-        dialog.open_multiple(self, None, done)
+        self._file_dialog(title, patterns, filter_name,
+                          multiple=True, on_result=on_paths)
 
     def on_import_chapters(self, *_):
         """File -> Importa come capitoli: ogni file .txt/.md scelto diventa un
@@ -2619,6 +3075,127 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
     def on_toggle_preview_whole(self, *_):
         self._toggle_preview(whole=True)
 
+    # ---- carattere ---------------------------------------------------------
+    def _font_choices(self):
+        """Elenco dei caratteri offerti: prima i due incorporati, poi le
+        famiglie TrueType installate. Ogni voce e' (etichetta, famiglia)."""
+        incorporato = self._t_or("font_builtin", "incorporato")
+        voci = [(f"{_TW_FAMILY} ({incorporato})", _TW_FAMILY),
+                (f"{SERIF_FAMILY} ({incorporato})", SERIF_FAMILY)]
+        interne = {_TW_FAMILY, SERIF_FAMILY}
+        voci += [(fam, fam) for fam in sorted(system_font_families())
+                 if fam not in interne]
+        return voci
+
+    def on_choose_font(self, *_):
+        """Sceglie DUE caratteri, separati: quello con cui si scrive e legge a
+        schermo, e quello con cui escono i documenti esportati.
+
+        Sono mestieri diversi. A schermo si sta ore su un testo in lavorazione,
+        e c'e' chi ci vuole una macchina da scrivere; il PDF e' il libro, e li'
+        di solito si vuole un serif da lettura. Percio' due tendine, non una,
+        con i predefiniti storici gia' selezionati."""
+        voci = self._font_choices()
+        etichette = [v[0] for v in voci]
+
+        def indice_di(famiglia, ripiego):
+            for i, (_lbl, fam) in enumerate(voci):
+                if fam == famiglia:
+                    return i
+            for i, (_lbl, fam) in enumerate(voci):
+                if fam == ripiego:
+                    return i
+            return 0
+
+        dialog, box = self._dialog_shell(
+            self._t_or("dlg_font_title", "Caratteri"), size=(460, -1))
+
+        def riga(chiave, ripiego_testo, selezione):
+            lbl = Gtk.Label(label=self._t_or(chiave, ripiego_testo), xalign=0)
+            lbl.add_css_class("rusca-dialog-text")
+            box.append(lbl)
+            tendina = Gtk.DropDown.new_from_strings(etichette)
+            tendina.set_selected(selezione)
+            box.append(tendina)
+            return tendina
+
+        t_schermo = riga("font_screen_label",
+                         "Scrittura e lettura a schermo",
+                         indice_di(getattr(self, "font_family", _TW_FAMILY),
+                                   _TW_FAMILY))
+        t_export = riga("font_export_label",
+                        "Documenti esportati (PDF)",
+                        indice_di(getattr(self, "doc_font", "") or SERIF_FAMILY,
+                                  SERIF_FAMILY))
+
+        nota = Gtk.Label(
+            label=self._t_or("font_ttf_note",
+                             "Sono elencate le famiglie TrueType: sono le sole "
+                             "che si possono incorporare nel PDF."),
+            xalign=0)
+        nota.set_wrap(True)
+        nota.add_css_class("rusca-dialog-text")
+        box.append(nota)
+
+        def conferma(*_a):
+            self.font_family = voci[t_schermo.get_selected()][1]
+            self.doc_font = voci[t_export.get_selected()][1]
+            self.settings["font_family"] = self.font_family
+            self.settings["doc_font"] = self.doc_font
+            save_settings(self.settings)
+            self._apply_editor_font()
+            dialog.destroy()
+            self._info(self.t("font_chosen", s=self.font_family,
+                              e=self.doc_font))
+
+        ok = self._ok_cancel_row(box, conferma,
+                                 lambda *_a: dialog.destroy())
+        self._dialog_present(dialog, box, ok)
+
+    # ---- interruzioni di riga ----------------------------------------------
+    def on_toggle_show_breaks(self, *_):
+        """Accende o spegne l'evidenziazione dei paragrafi spezzati. Non tocca
+        il testo: serve a vedere se e dove c'e' qualcosa da ricucire."""
+        self.show_breaks = not self.show_breaks
+        self.settings["show_breaks"] = self.show_breaks
+        save_settings(self.settings)
+        self._sync_switch("show_breaks", self.show_breaks)
+        self._highlight_markdown()
+        if self.show_breaks:
+            n = len(wrapped_runs(self._chapter_text()))
+            self._info(self.t("breaks_found", n=n) if n
+                       else self.t("breaks_none"))
+
+    def _chapter_text(self):
+        """Testo del capitolo aperto, così com'e' nell'area di scrittura."""
+        s, e = self.text_buffer.get_bounds()
+        return self.text_buffer.get_text(s, e, True)
+
+    def on_reflow_paragraphs(self, *_):
+        """Ricuce a mano i paragrafi spezzati del capitolo aperto.
+
+        E' la versione manuale di cio' che l'importazione fa da sola: serve
+        quando il testo e' arrivato per altre strade — incollato, o importato
+        con una versione precedente."""
+        if self.current is None:
+            return
+        text = self._chapter_text()
+        runs = wrapped_runs(text)
+        if not runs:
+            self._info(self.t("breaks_none"))
+            return
+        righe = sum(last - first for first, last in runs)
+        new_text = unwrap_hard_breaks(text)
+        if new_text == text:
+            self._info(self.t("breaks_none"))
+            return
+        self.text_buffer.set_text(new_text)
+        self._commit_current()
+        self._highlight_markdown()
+        self._mark_dirty()
+        self._update_wordcount()
+        self._info(self.t("reflow_done", n=len(runs), lines=righe))
+
     def _toggle_preview(self, whole):
         if self._preview_mode and bool(getattr(self, "_preview_whole", False)) == whole:
             self._preview_mode = False
@@ -2640,8 +3217,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
                     buf.insert(buf.get_end_iter(), "\n")
                     buf.insert_with_tags(buf.get_end_iter(),
                                          "* * *\n\n", self._pv_tags["sep"])
-                blocks_start = text.lstrip().split("\n", 1)[0] if text.strip() else ""
-                if not blocks_start.startswith("#"):
+                first = text.lstrip().split("\n", 1)[0] if text.strip() else ""
+                if classify_md_line(first)[0] != "heading":
                     buf.insert_with_tags(buf.get_end_iter(),
                                          ch_title + "\n", self._pv_tags["h1"])
                 self._render_markdown_into(text)
@@ -2650,72 +3227,295 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             self._render_markdown_into(text)
 
     def _render_markdown_into(self, text):
-        import re
+        """Riversa il Markdown nel buffer dell'anteprima. Riconoscimento delle
+        righe e della formattazione inline: entrambi dal parser condiviso in
+        model.py, così l'anteprima mostra esattamente ciò che finirà negli
+        export."""
         buf = self.preview_buffer
 
         def insert_inline(line, base_tags):
-            pattern = re.compile(
-                r"(\*\*\*|___)(.+?)\1"
-                r"|(\*\*|__)(.+?)\3"
-                r"|(\*|_)(.+?)\5"
-                r"|`(.+?)`")
-            pos = 0
-            for m in pattern.finditer(line):
-                if m.start() > pos:
-                    buf.insert_with_tags(buf.get_end_iter(),
-                                         line[pos:m.start()], *base_tags)
-                if m.group(2) is not None:
-                    tag = self._pv_tags["bolditalic"]; content = m.group(2)
-                elif m.group(4) is not None:
-                    tag = self._pv_tags["bold"]; content = m.group(4)
-                elif m.group(6) is not None:
-                    tag = self._pv_tags["italic"]; content = m.group(6)
-                else:
-                    tag = self._pv_tags["code"]; content = m.group(7)
-                buf.insert_with_tags(buf.get_end_iter(), content, tag, *base_tags)
-                pos = m.end()
-            if pos < len(line):
-                buf.insert_with_tags(buf.get_end_iter(), line[pos:], *base_tags)
+            for seg, style in parse_inline(line):
+                tag = self._pv_tags.get(style)
+                tags = ([tag] if tag is not None else []) + list(base_tags)
+                buf.insert_with_tags(buf.get_end_iter(), seg, *tags)
 
         for raw in text.split("\n"):
-            s = raw.rstrip("\n")
-            stripped = s.strip()
-            m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
-            if m:
-                lvl = min(3, len(m.group(1)))
-                tag = self._pv_tags[f"h{lvl}"]
-                buf.insert_with_tags(buf.get_end_iter(), m.group(2) + "\n", tag)
-            elif stripped[:2] in ("- ", "* ", "+ "):
-                buf.insert(buf.get_end_iter(), "  •  ")
-                insert_inline(stripped[2:], [])
-                buf.insert(buf.get_end_iter(), "\n")
-            elif re.match(r"^\d+\.\s+", stripped):
-                num = stripped.split(".", 1)[0]
-                buf.insert(buf.get_end_iter(), f"  {num}.  ")
-                insert_inline(re.sub(r"^\d+\.\s+", "", stripped), [])
-                buf.insert(buf.get_end_iter(), "\n")
-            elif stripped.startswith(">"):
-                insert_inline(stripped.lstrip(">").strip(),
-                              [self._pv_tags["quote"]])
-                buf.insert(buf.get_end_iter(), "\n")
+            kind, body, extra = classify_md_line(raw)
+            end = buf.get_end_iter
+            if kind == "heading":
+                buf.insert_with_tags(end(), body + "\n",
+                                     self._pv_tags[f"h{min(3, extra)}"])
+            elif kind == "bullet":
+                buf.insert(end(), "  \u2022  ")
+                insert_inline(body, [])
+                buf.insert(end(), "\n")
+            elif kind == "number":
+                buf.insert(end(), f"  {extra}.  ")
+                insert_inline(body, [])
+                buf.insert(end(), "\n")
+            elif kind == "quote":
+                insert_inline(body, [self._pv_tags["quote"]])
+                buf.insert(end(), "\n")
+            elif kind == "image":
+                # nell'anteprima la figura non c'e': resta la didascalia,
+                # in corsivo, dove comparira' l'immagine
+                insert_inline(body, [self._pv_tags["italic"]])
+                buf.insert(end(), "\n")
             else:
-                insert_inline(s, [])
-                buf.insert(buf.get_end_iter(), "\n")
+                insert_inline(raw.rstrip("\n"), [])
+                buf.insert(end(), "\n")
 
     # ---- informazioni -------------------------------------------------------
+    def _cover_generator_dialog(self, on_done, parent=None):
+        """EN: Cover generator: composes a typographic cover (colour ground,
+        double rule frame, author, optional picture, title, publisher) with a
+        live preview, and hands the resulting PNG bytes to 'on_done'. It is an
+        ALTERNATIVE to attaching a ready-made image, never a replacement: the
+        caller keeps its Attach/Remove buttons untouched.
+        IT: Generatore di copertine: compone una copertina tipografica (fondo
+        colorato, cornice a doppio filetto, autore, immagine facoltativa,
+        titolo, editore) con anteprima dal vivo, e passa i byte PNG ottenuti a
+        'on_done'. E' un'ALTERNATIVA all'allegare un'immagine gia' pronta, mai
+        un sostituto: i pulsanti Allega/Rimuovi del chiamante restano intatti."""
+        # EN: initial values taken from the frontispiece metadata the user has
+        #     already filled in (title/author/publisher), so the generator
+        #     opens with the book's own data instead of placeholders.
+        # IT: valori iniziali presi dai dati del frontespizio gia' compilati
+        #     dall'utente (titolo/autore/editore), cosi' il generatore si apre
+        #     con i dati del libro invece che con segnaposto.
+        front = getattr(self.project, "frontispiece_fields", {}) or {}
+        st = {
+            "fmt": getattr(self, "_pdf_page_size", pw_model.COVER_DEFAULT_FORMAT),
+            "bg": pw_model.COVER_DEFAULT_COLOR,
+            "txt": "#111111",
+            "author": (front.get("author") or "").strip(),
+            "title": (front.get("title") or self.project.title or "").strip(),
+            "publisher": (front.get("publisher") or "").strip(),
+            "image": None,
+        }
+        if st["fmt"] not in pw_model.COVER_FORMATS:
+            st["fmt"] = pw_model.COVER_DEFAULT_FORMAT
+
+        dialog = Gtk.Window(transient_for=(parent or self), modal=True)
+        dialog.add_css_class("rusca-dialog")
+        dialog.set_title(self._t_or("cover_gen_title", "Genera copertina"))
+        dialog.set_default_size(760, 640)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        outer.set_margin_top(16); outer.set_margin_bottom(16)
+        outer.set_margin_start(18); outer.set_margin_end(18)
+        outer.add_css_class("rusca-bg")
+
+        # ---- colonna sinistra: controlli (scorrevole) ----
+        ctrl_scroll = Gtk.ScrolledWindow()
+        ctrl_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        ctrl_scroll.set_vexpand(True)
+        ctrl_scroll.set_size_request(320, -1)
+        ctrl = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        ctrl_scroll.set_child(ctrl)
+        outer.append(ctrl_scroll)
+
+        # ---- colonna destra: anteprima ----
+        prev_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        prev_box.set_hexpand(True)
+        preview = Gtk.Picture()
+        preview.set_can_shrink(True)
+        preview.set_vexpand(True)
+        prev_box.append(preview)
+        outer.append(prev_box)
+
+        def _label(text, bold=False):
+            l = Gtk.Label(xalign=0)
+            if bold:
+                l.set_markup(f"<b>{GLib.markup_escape_text(text)}</b>")
+            else:
+                l.set_text(text)
+            l.add_css_class("rusca-dialog-text")
+            return l
+
+        # --- anteprima: ridisegnata a ogni modifica ---
+        def refresh():
+            data = pw_model.render_cover_image(
+                fmt_key=st["fmt"], dpi=pw_model.COVER_PREVIEW_DPI,
+                bg_color=st["bg"], text_color=st["txt"],
+                author=st["author"], title=st["title"],
+                publisher=st["publisher"], image_bytes=st["image"],
+                out_format="png", font_dir=paths.ASSETS_DIR)
+            if not data or GdkPixbuf is None:
+                preview.set_paintable(None)
+                return
+            try:
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(data); loader.close()
+                preview.set_pixbuf(loader.get_pixbuf())
+            except Exception:
+                preview.set_paintable(None)
+
+        # --- campi di testo ---
+        ctrl.append(_label(self._t_or("cover_gen_texts", "Testi"), bold=True))
+
+        def text_field(label_key, default_label, key):
+            ctrl.append(_label(self._t_or(label_key, default_label)))
+            e = Gtk.Entry()
+            e.add_css_class("rusca-dialog")
+            e.set_text(st[key] or "")
+
+            def changed(entry):
+                st[key] = entry.get_text()
+                refresh()
+            e.connect("changed", changed)
+            ctrl.append(e)
+            return e
+
+        text_field("cover_gen_author", "Autore", "author")
+        text_field("cover_gen_book_title", "Titolo", "title")
+        text_field("cover_gen_publisher", "Casa editrice", "publisher")
+
+        # --- immagine facoltativa ---
+        ctrl.append(_label(self._t_or("cover_gen_image", "Immagine"), bold=True))
+        img_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        b_pick = Gtk.Button(label=self._t_or("cover_gen_pick", "Scegli…"))
+        b_clear = Gtk.Button(label=self._t_or("cover_gen_clear", "Togli"))
+
+        def pick_image():
+            def on_path(path):
+                try:
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    if pw_model.image_format(data) is None:
+                        self._error(self.t("err_img_format"))
+                        return
+                    st["image"] = data
+                    refresh()
+                except Exception as exc:
+                    self._error(self.t("err_open", e=exc))
+            self._open_file_dialog(self._t_or("cover_gen_pick", "Scegli…"),
+                                   ["*.png", "*.jpg", "*.jpeg", "*.webp"],
+                                   self.t("filter_image"), on_path)
+
+        b_pick.connect("clicked", lambda *_: pick_image())
+
+        def clear_image(*_):
+            st["image"] = None
+            refresh()
+        b_clear.connect("clicked", clear_image)
+        img_row.append(b_pick); img_row.append(b_clear)
+        ctrl.append(img_row)
+
+        # --- formato pagina ---
+        ctrl.append(_label(self._t_or("cover_gen_format", "Formato"), bold=True))
+        fmt_keys = list(pw_model.COVER_FORMATS.keys())
+        fmt_combo = Gtk.ComboBoxText()
+        for k in fmt_keys:
+            # le etichette gia' contengono le misure in centimetri
+            fmt_combo.append_text(PDF_PAGE_SIZE_LABELS.get(k, k))
+        fmt_combo.set_active(fmt_keys.index(st["fmt"]))
+
+        def fmt_changed(cb):
+            i = cb.get_active()
+            if 0 <= i < len(fmt_keys):
+                st["fmt"] = fmt_keys[i]
+                refresh()
+        fmt_combo.connect("changed", fmt_changed)
+        ctrl.append(fmt_combo)
+
+        # --- colore del fondo: tavolozza + scelta libera ---
+        ctrl.append(_label(self._t_or("cover_gen_color", "Colore"), bold=True))
+        grid = Gtk.Grid()
+        grid.set_row_spacing(6); grid.set_column_spacing(6)
+        for i, hexcol in enumerate(pw_model.COVER_COLORS):
+            sw = Gtk.Button()
+            sw.set_size_request(34, 26)
+            # pastiglia colorata come contenuto del pulsante
+            css = Gtk.CssProvider()
+            css.load_from_data(
+                f"button {{ background-image:none; background-color:{hexcol}; }}"
+                .encode("utf-8"))
+            sw.get_style_context().add_provider(
+                css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            sw.set_tooltip_text(hexcol)
+
+            def pick(_b, c=hexcol):
+                st["bg"] = c
+                refresh()
+            sw.connect("clicked", pick)
+            grid.attach(sw, i % 6, i // 6, 1, 1)
+        ctrl.append(grid)
+
+        free_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        free_row.append(_label(self._t_or("cover_gen_custom", "Personalizzato")))
+        color_btn = Gtk.ColorButton()
+        try:
+            rgba = Gdk.RGBA(); rgba.parse(st["bg"])
+            color_btn.set_rgba(rgba)
+        except Exception:
+            pass
+
+        def color_set(btn):
+            c = btn.get_rgba()
+            st["bg"] = "#%02x%02x%02x" % (int(c.red * 255 + .5),
+                                          int(c.green * 255 + .5),
+                                          int(c.blue * 255 + .5))
+            refresh()
+        color_btn.connect("color-set", color_set)
+        free_row.append(color_btn)
+        ctrl.append(free_row)
+
+        # --- colore del testo ---
+        ctrl.append(_label(self._t_or("cover_gen_text_color", "Testo"), bold=True))
+        txt_combo = Gtk.ComboBoxText()
+        txt_combo.append_text(self._t_or("cover_gen_text_dark", "Testo nero"))
+        txt_combo.append_text(self._t_or("cover_gen_text_light", "Testo bianco"))
+        txt_combo.set_active(0)
+
+        def txt_changed(cb):
+            st["txt"] = "#ffffff" if cb.get_active() == 1 else "#111111"
+            refresh()
+        txt_combo.connect("changed", txt_changed)
+        ctrl.append(txt_combo)
+
+        # ---- pulsanti finali ----
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        actions.set_halign(Gtk.Align.END)
+        b_cancel = Gtk.Button(label=self.t("btn_cancel"))
+        b_use = Gtk.Button(label=self._t_or("cover_gen_use", "Usa come copertina"))
+        b_use.add_css_class("suggested-action")
+        actions.append(b_cancel); actions.append(b_use)
+        prev_box.append(actions)
+
+        def close(*_):
+            dialog.destroy()
+        b_cancel.connect("clicked", close)
+
+        def confirm(*_):
+            # immagine finale a piena risoluzione (300 DPI), non l'anteprima
+            data = pw_model.render_cover_image(
+                fmt_key=st["fmt"], dpi=pw_model.COVER_EXPORT_DPI,
+                bg_color=st["bg"], text_color=st["txt"],
+                author=st["author"], title=st["title"],
+                publisher=st["publisher"], image_bytes=st["image"],
+                out_format="png", font_dir=paths.ASSETS_DIR)
+            dialog.destroy()
+            if data:
+                on_done(data)
+            else:
+                self._error(self._t_or(
+                    "cover_gen_failed",
+                    "Non è stato possibile generare la copertina."))
+        b_use.connect("clicked", confirm)
+
+        dialog.set_child(outer)
+        dialog.set_default_widget(b_use)
+        refresh()
+        dialog.present()
+        GLib.idle_add(self._raise_dialog, dialog)
+
     def on_edit_sections(self, *_):
         """Dialogo per gestire le tre sezioni editoriali: immagine di copertina,
         frontespizio e colophon. Le modifiche vengono applicate al progetto solo
         quando si preme Salva."""
-        dialog = Gtk.Window(transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_title(self.t("sections_title"))
-        dialog.set_default_size(560, 640)
-
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        outer.set_margin_top(16); outer.set_margin_bottom(16)
-        outer.set_margin_start(18); outer.set_margin_end(18)
-        outer.add_css_class("rusca-bg")
+        dialog, outer = self._dialog_shell(self.t("sections_title"),
+                                           size=(560, 640), margin=18)
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -2765,6 +3565,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
 
         btnrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         b_attach = Gtk.Button(label=self.t("sec_cover_attach"))
+        b_generate = Gtk.Button(
+            label=self._t_or("sec_cover_generate", "Genera…"))
         b_remove = Gtk.Button(label=self.t("sec_cover_remove"))
 
         def do_attach():
@@ -2794,11 +3596,37 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             pending["fmt"] = None
             refresh_preview()
 
+        def do_generate():
+            # EN: the generator returns PNG bytes; they enter the very same
+            #     pending slot used by an attached image, so saving, preview
+            #     and every export treat both origins identically.
+            # IT: il generatore restituisce byte PNG; entrano nello stesso
+            #     spazio "pending" di un'immagine allegata, cosi' salvataggio,
+            #     anteprima ed export trattano le due origini allo stesso modo.
+            def on_done(data):
+                if not data:
+                    return
+                pending["image"] = data
+                pending["fmt"] = pw_model.image_format(data) or "png"
+                refresh_preview()
+            self._cover_generator_dialog(on_done, parent=dialog)
+
         b_attach.connect("clicked", lambda *_: do_attach())
+        b_generate.connect("clicked", lambda *_: do_generate())
         b_remove.connect("clicked", lambda *_: do_remove())
         btnrow.append(b_attach)
+        btnrow.append(b_generate)
         btnrow.append(b_remove)
         body.append(btnrow)
+
+        # senza Pillow non si puo' disegnare il testo della copertina: il
+        # generatore resta visibile ma disattivato, con una spiegazione.
+        if not pw_model.cover_generator_available():
+            b_generate.set_sensitive(False)
+            b_generate.set_tooltip_text(self._t_or(
+                "sec_cover_generate_needs_pil",
+                "Per generare una copertina serve Pillow: "
+                "sudo apt install python3-pil"))
 
         # helper per creare una riga "etichetta + campo"
         def field_row(label_text, value=""):
@@ -2918,15 +3746,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         # In GTK 4 Gtk.AlertDialog e' solo testo (niente immagine), quindi per
         # mostrare la stilografica costruiamo una finestra dedicata, come quella
         # di avvio: icona in alto, nome, testo informativo e pulsante Chiudi.
-        dialog = Gtk.Window(transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_title(self.t("mi_about"))
-        dialog.set_default_size(460, 520)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_margin_top(20); box.set_margin_bottom(20)
-        box.set_margin_start(24); box.set_margin_end(24)
-        box.add_css_class("rusca-bg")
+        dialog, box = self._dialog_shell(self.t("mi_about"),
+                                         size=(460, 520), spacing=10, margin=22)
 
         tex = load_texture(96)
         if tex is not None:
@@ -2982,21 +3803,90 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         # tutto il testo evidenziato.
         btn.grab_focus()
 
+    def on_md_help(self, *_):
+        """Finestra 'Guida ai comandi Markdown': elenca in breve la sintassi
+        Markdown che l'editor riconosce e impagina negli export (specialmente
+        nel PDF). E' costruita come una griglia a due colonne: a sinistra
+        l'esempio di sintassi (in monospazio), a destra l'effetto. I testi
+        vengono dai file di lingua con ripiego in italiano, cosi' la guida e'
+        traducibile senza toccare il codice."""
+        # ogni voce: (chiave_traduzione, esempio_sintassi, descrizione_fallback)
+        rows = [
+            ("md_h1",     "# Titolo",          "Titolo di primo livello"),
+            ("md_h2",     "## Sottotitolo",    "Titoli minori (fino a ######)"),
+            ("md_bold",   "**grassetto**",     "Testo in grassetto"),
+            ("md_italic", "*corsivo*",         "Testo in corsivo"),
+            ("md_both",   "***entrambi***",    "Grassetto e corsivo insieme"),
+            ("md_code",   "`codice`",          "Testo a spaziatura fissa"),
+            ("md_quote",  "> citazione",       "Citazione (resa in corsivo)"),
+            ("md_ul",     "- elenco",          "Elenco puntato (anche * o +)"),
+            ("md_ol",     "1. elenco",         "Elenco numerato"),
+            ("md_link",   "[testo](url)",      "Collegamento (resta il testo)"),
+            ("md_img",    "![didascalia](img)", "Immagine allegata con didascalia"),
+            ("md_para",   "riga vuota",        "Una riga vuota separa i paragrafi"),
+        ]
+
+        dialog, box = self._dialog_shell(
+            self._t_or("mi_md_help", "Guida ai comandi Markdown"),
+            size=(480, 540), margin=22)
+
+        title = Gtk.Label()
+        title.set_markup("<span size='large' weight='bold'>%s</span>"
+                         % GLib.markup_escape_text(
+                             self._t_or("mi_md_help",
+                                        "Guida ai comandi Markdown")))
+        title.set_xalign(0.5)
+        title.add_css_class("column-title")
+        box.append(title)
+
+        intro = Gtk.Label(label=self._t_or(
+            "md_help_intro",
+            "L'editor usa Markdown. Scrivi normalmente e usa questi simboli "
+            "per la formattazione: verranno resi negli export (PDF, EPUB, "
+            "ODT, DOCX, HTML)."))
+        intro.add_css_class("rusca-dialog-text")
+        intro.set_wrap(True)
+        intro.set_justify(Gtk.Justification.CENTER)
+        intro.set_xalign(0.5); intro.set_max_width_chars(48)
+        box.append(intro)
+
+        grid = Gtk.Grid()
+        grid.set_row_spacing(8)
+        grid.set_column_spacing(18)
+        grid.set_margin_start(4); grid.set_margin_end(4)
+        for i, (key, syntax, fallback) in enumerate(rows):
+            code = Gtk.Label()
+            # esempio in monospazio, cosi' i simboli si distinguono bene
+            code.set_markup("<tt>%s</tt>" % GLib.markup_escape_text(syntax))
+            code.set_xalign(0.0)
+            code.add_css_class("rusca-dialog-text")
+            code.set_selectable(True)
+            desc = Gtk.Label(label=self._t_or(key, fallback))
+            desc.set_xalign(0.0)
+            desc.set_wrap(True)
+            desc.set_max_width_chars(30)
+            desc.add_css_class("rusca-dialog-text")
+            grid.attach(code, 0, i, 1, 1)
+            grid.attach(desc, 1, i, 1, 1)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        scroller.set_child(grid)
+        box.append(scroller)
+
+        btn = Gtk.Button(label=self.t("ok"))
+        btn.add_css_class("suggested-action")
+        btn.set_halign(Gtk.Align.CENTER)
+        btn.connect("clicked", lambda *_: dialog.destroy())
+        box.append(btn)
+
+        self._dialog_present(dialog, box, btn)
+
     # ---- export -------------------------------------------------------------
     def on_export(self, *_):
-        self._commit_current()
-        self._save_file_dialog(self.t("dlg_export_title"),
-                               f"{self.project.title}.txt", None, None,
-                               self._do_export_txt)
-
-    def _do_export_txt(self, path):
-        if not path.endswith(".txt"):
-            path += ".txt"
-        try:
-            self.project.export_txt(path)
-            self._info(self.t("exported", p=path))
-        except Exception as exc:
-            self._error(self.t("err_export", e=exc))
+        self._export_simple("txt", None, self.project.export_txt,
+                            title_key="dlg_export_title")
 
     def on_export_pdf(self, *_):
         self._commit_current()
@@ -3011,10 +3901,15 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         if current not in PDF_PAGE_SIZES:
             current = PDF_DEFAULT_PAGE_SIZE
 
-        def choose(size_key):
+        def choose(size_key, justify, hyphenate):
             self._pdf_page_size = size_key
-            # ricorda la scelta tra le sessioni
+            self._pdf_justify = bool(justify)
+            self._pdf_hyphenate = bool(hyphenate) and hyphenation_available(
+                getattr(self, "lang", "it"))
+            # ricorda le scelte tra le sessioni
             self.settings["pdf_page_size"] = size_key
+            self.settings["pdf_justify"] = self._pdf_justify
+            self.settings["pdf_hyphenate"] = self._pdf_hyphenate
             try:
                 save_settings(self.settings)
             except Exception:
@@ -3023,15 +3918,9 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
                                    f"{self.project.title}.pdf", ["*.pdf"],
                                    self.t("filter_pdf"), self._do_export_pdf)
 
-        dialog = Gtk.Window(transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_title(self._t_or("dlg_pdf_size_title", "Formato pagina"))
-        dialog.set_resizable(False)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_margin_top(16); box.set_margin_bottom(16)
-        box.set_margin_start(20); box.set_margin_end(20)
-        box.add_css_class("rusca-bg")
+        dialog, box = self._dialog_shell(
+            self._t_or("dlg_pdf_size_title", "Formato pagina"),
+            spacing=10, margin=18)
 
         head = Gtk.Label()
         head.set_markup("<b>%s</b>" % GLib.markup_escape_text(
@@ -3048,14 +3937,19 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
         box.append(hint)
 
         state = {"done": False}
+        # riferimenti alle caselle tipografiche, lette al momento della scelta
+        opts = {"justify": None, "hyphenate": None}
 
         def finish(size_key):
             if state["done"]:
                 return
             state["done"] = True
+            j = opts["justify"].get_active() if opts["justify"] else False
+            h = opts["hyphenate"].get_active() if opts["hyphenate"] else False
             dialog.destroy()
             if size_key is not None:
-                GLib.idle_add(lambda: (choose(size_key), False)[1])
+                GLib.idle_add(
+                    lambda: (choose(size_key, j, h), False)[1])
 
         # altezza dell'anteprima in pixel: il rettangolo piu' alto (formato piu'
         # allungato) occupa quasi tutta questa altezza; gli altri in proporzione.
@@ -3110,6 +4004,74 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             row.append(b)
             box.append(row)
 
+        # --- opzioni tipografiche: giustifica e sillaba --------------------
+        # Un separatore leggero e due caselle. La sillabazione richiede il
+        # pacchetto opzionale Pyphen (python3-pyphen) E un dizionario per la
+        # lingua corrente (su Debian un pacchetto hyphen-<lingua>): se manca
+        # l'uno o l'altro la casella e' disattivata e un testo di aiuto spiega
+        # come abilitarla.
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep.set_margin_top(4); sep.set_margin_bottom(4)
+        box.append(sep)
+
+        # la sillabazione e' realmente possibile solo se c'e' Pyphen E un
+        # dizionario per la lingua dell'interfaccia
+        cur_lang = getattr(self, "lang", "it")
+        hyph_ok = hyphenation_available(cur_lang)
+
+        chk_justify = Gtk.CheckButton(
+            label=self._t_or("dlg_pdf_justify", "Giustifica il testo"))
+        chk_justify.add_css_class("rusca-dialog-text")
+        chk_justify.set_active(getattr(self, "_pdf_justify", False))
+        box.append(chk_justify)
+        opts["justify"] = chk_justify
+
+        chk_hyphen = Gtk.CheckButton(
+            label=self._t_or("dlg_pdf_hyphenate", "Sillaba le parole a fine riga"))
+        chk_hyphen.add_css_class("rusca-dialog-text")
+        if hyph_ok:
+            chk_hyphen.set_active(getattr(self, "_pdf_hyphenate", False))
+        else:
+            # senza Pyphen o senza dizionario della lingua la sillabazione non
+            # e' possibile: casella spenta e disattivata, cosi' l'utente vede
+            # che l'opzione esiste ma richiede qualcosa in piu'.
+            chk_hyphen.set_active(False)
+            chk_hyphen.set_sensitive(False)
+        box.append(chk_hyphen)
+        opts["hyphenate"] = chk_hyphen
+
+        # la sillabazione ha senso solo col testo giustificato: quando la
+        # giustificazione e' spenta, disattiviamo (visivamente) la casella
+        # della sillabazione. Resta comunque innocua se attiva da sola.
+        def _sync_hyphen(*_):
+            can = chk_justify.get_active() and hyph_ok
+            chk_hyphen.set_sensitive(can)
+            if not can:
+                chk_hyphen.set_active(False)
+        chk_justify.connect("toggled", _sync_hyphen)
+        _sync_hyphen()
+
+        if not hyph_ok:
+            # messaggio diverso a seconda del motivo: manca proprio Pyphen,
+            # oppure Pyphen c'e' ma non il dizionario della lingua corrente.
+            if not HAVE_PYPHEN:
+                hint_text = self._t_or(
+                    "dlg_pdf_hyphenate_hint",
+                    "Per sillabare installa Pyphen e un dizionario:\n"
+                    "sudo apt install python3-pyphen hyphen-it")
+            else:
+                hint_text = self._t_or(
+                    "dlg_pdf_hyphenate_hint_dict",
+                    "Per sillabare in questa lingua installa il dizionario:\n"
+                    "sudo apt install hyphen-<lingua>")
+            hyp_hint = Gtk.Label(label=hint_text)
+            hyp_hint.add_css_class("rusca-dialog-text")
+            hyp_hint.set_wrap(True)
+            hyp_hint.set_justify(Gtk.Justification.CENTER)
+            hyp_hint.set_xalign(0.5); hyp_hint.set_max_width_chars(46)
+            hyp_hint.set_opacity(0.75)
+            box.append(hyp_hint)
+
         cancel = Gtk.Button(label=self.t("btn_cancel"))
         cancel.connect("clicked", lambda _w: finish(None))
         box.append(cancel)
@@ -3137,13 +4099,41 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             # piu' adatto di un monospace come il Courier Prime dell'editor.
             here = paths.ASSETS_DIR
             embed_fonts = {}
-            for style, ffile in SERIF_FILES.items():
-                metrics = read_ttf_metrics(os.path.join(here, ffile))
-                if metrics:
-                    embed_fonts[style] = metrics
-            if "regular" in embed_fonts:
-                fname = "EBGaramond"
-            else:
+            fname = None
+            # 1) carattere scelto da chi scrive, se e' una famiglia di sistema
+            scelto = getattr(self, "doc_font", "")
+            # i due caratteri incorporati si riconoscono per nome e si
+            # prendono dalla cartella assets, senza cercarli nel sistema
+            incorporati = {SERIF_FAMILY: SERIF_FILES,
+                           _TW_FAMILY: TYPEWRITER_FILES}
+            if scelto in incorporati:
+                for style, ffile in incorporati[scelto].items():
+                    metrics = read_ttf_metrics(os.path.join(here, ffile))
+                    if metrics:
+                        embed_fonts[style] = metrics
+                if "regular" in embed_fonts:
+                    fname = scelto.replace(" ", "")
+                else:
+                    embed_fonts = {}
+            elif scelto:
+                for style, ffile in font_files_for_family(scelto).items():
+                    metrics = read_ttf_metrics(ffile)
+                    if metrics:
+                        embed_fonts[style] = metrics
+                if "regular" in embed_fonts:
+                    # il nome dentro il PDF non ammette spazi
+                    fname = scelto.replace(" ", "")
+                else:
+                    embed_fonts = {}
+            # 2) altrimenti il serif da lettura incorporato
+            if not embed_fonts:
+                for style, ffile in SERIF_FILES.items():
+                    metrics = read_ttf_metrics(os.path.join(here, ffile))
+                    if metrics:
+                        embed_fonts[style] = metrics
+                if "regular" in embed_fonts:
+                    fname = "EBGaramond"
+            if "regular" not in embed_fonts:
                 # ripiego: se i .ttf del serif non ci sono, prova il Courier Prime
                 embed_fonts = {}
                 for style, ffile in TYPEWRITER_FILES.items():
@@ -3156,27 +4146,25 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             self.project.export_pdf(path, font_size=self.font_size,
                                     embed_fonts=embed_fonts, embed_font_name=fname,
                                     page_size=getattr(self, "_pdf_page_size",
-                                                      PDF_DEFAULT_PAGE_SIZE))
+                                                      PDF_DEFAULT_PAGE_SIZE),
+                                    justify=getattr(self, "_pdf_justify", False),
+                                    hyphenate=getattr(self, "_pdf_hyphenate", False),
+                                    hyphen_lang=getattr(self, "lang", "it"))
             self._info(self.t("exported", p=path))
         except Exception as exc:
             self._error(self.t("err_export", e=exc))
 
     def on_export_epub(self, *_):
-        self._commit_current()
-        self._save_file_dialog(self.t("dlg_export_epub_title"),
-                               f"{self.project.title}.epub", ["*.epub"],
-                               self.t("filter_epub"), self._do_export_epub)
+        self._export_simple("epub", "filter_epub", self.project.export_epub,
+                            title_key="dlg_export_epub_title")
 
-    def _do_export_epub(self, path):
-        if not path.endswith(".epub"):
-            path += ".epub"
-        try:
-            self.project.export_epub(path)
-            self._info(self.t("exported", p=path))
-        except Exception as exc:
-            self._error(self.t("err_export", e=exc))
+    def _export_simple(self, ext, filter_key, method, title_key="export"):
+        """Esporta in un formato che non chiede altre scelte all'utente.
 
-    def _export_simple(self, ext, filter_key, method):
+        Sette export su otto seguono la stessa sequenza: chiedi dove salvare,
+        aggiungi l'estensione se manca, esporta, avvisa dell'esito. Sta qui una
+        volta sola; PDF e HTML, che prima del salvataggio fanno domande in piu',
+        restano a parte."""
         self._commit_current()
 
         def on_path(path):
@@ -3188,9 +4176,11 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
             except Exception as exc:
                 self._error(self.t("err_export", e=exc))
 
-        self._save_file_dialog(self.t("export"),
-                               f"{self.project.title}.{ext}", [f"*.{ext}"],
-                               self.t(filter_key), on_path)
+        self._save_file_dialog(self.t(title_key),
+                               f"{self.project.title}.{ext}",
+                               [f"*.{ext}"] if filter_key else None,
+                               self.t(filter_key) if filter_key else None,
+                               on_path)
 
     def on_export_markdown(self, *_):
         self._export_simple("md", "filter_md", self.project.export_markdown)
@@ -3238,14 +4228,8 @@ class RuscaWriterWindow(Gtk.ApplicationWindow):
     # ---- avvio --------------------------------------------------------------
     def _startup_dialog(self):
         tex = load_texture(160)
-        dialog = Gtk.Window(transient_for=self, modal=True)
-        dialog.add_css_class("rusca-dialog")
-        dialog.set_title(f"{APP_NAME} v{APP_VERSION}")
-        dialog.set_default_size(420, 360)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_margin_top(24); box.set_margin_bottom(24)
-        box.set_margin_start(24); box.set_margin_end(24)
-        box.add_css_class("rusca-bg")
+        dialog, box = self._dialog_shell(f"{APP_NAME} v{APP_VERSION}",
+                                         size=(420, 360), spacing=10, margin=22)
         if tex is not None:
             img = Gtk.Image.new_from_paintable(tex)
             img.set_pixel_size(160)

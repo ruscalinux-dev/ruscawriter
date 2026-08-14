@@ -133,15 +133,34 @@ mkdir -p "$ROOT/usr/share/man/man1"
 cat > "$ROOT/usr/share/man/man1/$PKG.1" <<MANPAGE
 .TH RUSCAWRITER 1 "$(date '+%B %Y')" "RuscaWriter $UPSTREAM_VERSION" "User Commands"
 .SH NAME
-ruscawriter \- three-column writing editor for text and non-fiction
+ruscawriter \- writing and typesetting in one small program
 .SH SYNOPSIS
 .B ruscawriter
 .RI [ FILE ]
 .SH DESCRIPTION
 .B RuscaWriter
-is a focused, three-column writing editor: chapter list, your text and
-per-chapter notes side by side. You write in plain Markdown and export a
-finished book to PDF, EPUB, DOCX, ODT, HTML, Markdown or TXT.
+is a writing environment for books: chapter list, your text and per-chapter
+notes side by side. You write in Markdown, and the same program typesets the
+result and exports it to PDF, EPUB, DOCX, ODT, HTML, Markdown or TXT.
+.PP
+The PDF export can justify the body text and, when the optional
+.B python3-pyphen
+package and a matching
+.B hyphen-<lang>
+dictionary are installed, hyphenate words at line ends for a tidier right
+margin.
+.PP
+The cover of a project can either be a ready-made image you attach, or one
+built with the cover generator (Editorial sections, "Generate..."), which
+composes a typographic cover with a live preview and renders it at 300 DPI.
+The generator needs the optional
+.B python3-pil
+package; without it, attaching an image still works.
+.PP
+The interface comes in two colour families, chosen under View, Theme: the plum
+of RuscaLinux and a classic, neutral Standard one. Light or dark is a separate
+choice (Ctrl+Shift+D), so the two combine. Both are remembered between
+sessions.
 .PP
 If a project FILE (a .rwr file) is given, it is opened on startup.
 .SH FILES
@@ -171,15 +190,25 @@ Section: editors
 Priority: optional
 Architecture: $ARCH
 Depends: python3, python3-gi, gir1.2-gtk-4.0
-Recommends: gir1.2-gtksource-5, gir1.2-spelling-1, hunspell-it, hunspell-en-us
-Suggests: calibre
+Recommends: gir1.2-gtksource-5, gir1.2-spelling-1, hunspell-it, hunspell-en-us, python3-pil
+Suggests: calibre, python3-pyphen, hyphen-it, hyphen-en-us
 Maintainer: $MAINTAINER
 Homepage: https://www.ruscalinux.org/ruscawriter/
-Description: Three-column writing editor for text and non-fiction
- RuscaWriter is a focused, three-column writing editor for non-fiction:
- chapter list, your text and per-chapter notes side by side. Write in plain
- Markdown and export a finished book to PDF, EPUB, DOCX, ODT, HTML, Markdown
- or TXT.
+Description: Writing and typesetting in one small program
+ RuscaWriter is a writing environment for books: chapter list, your text and
+ per-chapter notes side by side. You write in Markdown, then the same program
+ typesets the result — book page sizes, binding margins, justified text,
+ hyphenation, embedded fonts, cover, frontispiece and colophon — and exports
+ to PDF, EPUB, DOCX, ODT, HTML, Markdown or TXT. No plugins and no external
+ converters are involved.
+ .
+ It is a small program on purpose: a plain three-column interface, a flat
+ chapter outline you can reorder, and nothing to configure before the first
+ sentence. Written in Python 3 and GTK 4, it never connects to the network.
+ .
+ Free software, GPL v3. A project file is a tar.gz of Markdown files, so the
+ text can be recovered with ordinary tools even without RuscaWriter — a book
+ outlives the programs used to write it.
  .
  Part of the RuscaLinux project, a Debian-based GNU/Linux distribution.
 CONTROL

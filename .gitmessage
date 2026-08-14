@@ -1,0 +1,24 @@
+
+# ─────────────────────────────────────────────────────────────────────
+# One line. Start it with one of these seven words.
+#
+#   added:      something new you can use
+#   changed:    something that already existed and now works differently
+#   fixed:      a bug gone
+#   removed:    something taken away
+#   ---- the four above go in the CHANGELOG. The three below don't: ----
+#   internal:   refactoring, tests, cleanups
+#   docs:       README, SECURITY, man page, comments
+#   packaging:  build-deb.sh, icons, .desktop, dependencies
+#
+# Write it as if finishing the sentence "From this commit on...".
+#   added: LaTeX export
+#   fixed: cover preview was blurry on HiDPI screens
+#   internal: reworked the PDF writer
+#
+# Rules:
+#   - one commit, one thing. If you need the word "and", that's two commits.
+#   - lowercase after the colon, no full stop.
+#   - keep the line under 72 characters.
+#   - if the WHY needs saying, leave a blank line and say it below.
+# ─────────────────────────────────────────────────────────────────────

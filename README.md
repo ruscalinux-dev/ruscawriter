@@ -1,205 +1,283 @@
 # RuscaWriter
 
-🇮🇹 [Leggilo in italiano](README.it.md)
+**Writing and typesetting in one small program.**
 
-![RuscaWriter — write in Markdown, export a finished book](docs/ruscawriter_before_after.png)
+Write the book, then print the book.
 
-Three-column writing editor (chapters · text · notes) from the **RuscaLinux**
-project. Designed for texts and general non-fiction, with export to many
-formats and an interface in 40 languages. Free software under the GNU
-GPL v3+ licence.
+![RuscaWriter: three columns on the left, the typeset page on the right](docs/ruscawriter_before_after.png)
 
-## Running
+Part of the [RuscaLinux](https://www.ruscalinux.org/) project. Free software,
+GNU GPL v3 or later.
 
-From the project folder:
+## Why it exists
 
-```
-python3 ruscawriter.py
-```
+Scrivener came to Linux once. The last build was an unsupported beta, and in
+[October 2015](https://forum.literatureandlatte.com/t/linux-1-9-01-beta-released/31623)
+its authors said plainly there were no plans for another: Linux users were
+pointed at WINE or a virtual machine. It was never coming back, because it was
+never ours to keep.
 
-Requirements: Python 3, PyGObject and GTK 4. On Debian/Ubuntu:
+So Linux writers went back to what Linux already had, which is plenty of good
+programs — each doing half the job. You draft in one, then move the text into
+another to lay it out. Every move costs you something: the formatting, the
+notes in the margin, an afternoon.
+
+RuscaWriter does both. You keep chapters, text and notes side by side while you
+write. When you are done, the same program typesets the book: page format,
+binding margins, justified text, hyphenation, embedded fonts, cover,
+frontispiece, colophon, index. No plugins. No external converters. No export to
+a third tool.
+
+## Why it has to be free software
+
+The 2015 story is not a grievance, it is the argument. Those users had done
+nothing wrong. They had bought nothing that expired, broken no rule, made no
+mistake. The program left because it belonged to someone else, and that someone
+had every right to stop.
+
+A book is written over years. It outlives programs, operating systems and
+companies, and the file it lives in has to outlive them too. A manuscript held
+in a format only one program can open is a manuscript held hostage to that
+program's business decisions — and to whether Linux is still worth the trouble
+next quarter.
+
+So the guarantees here are not promises, they are properties you can check:
+
+- **The source is yours.** GPL v3. If this project stops, anyone can continue
+  it. Nobody has to ask.
+- **The format is plain text.** A `.rwr` file is a `tar.gz` of Markdown files.
+  Even with every copy of RuscaWriter gone from the earth, `tar xzf` gets your
+  chapters back, readable in any editor.
+- **It never connects to the network.** No account, no licence check, no
+  subscription that lapses, nothing to phone home about your work.
+- **It exports to formats other programs read.** PDF, EPUB, DOCX, ODT, HTML,
+  Markdown, plain text. Leaving is always possible, which is the only reason
+  staying means anything.
+
+Free software is not a moral flourish on the end of a feature list. For a tool
+you trust a book to, it is the feature.
+
+## What it is not
+
+RuscaWriter is not a Scrivener clone, and does not try to become one. It takes
+one idea from it — chapters, text and notes side by side, and a single program
+that both drafts and typesets — and stops there.
+
+The chapter column is the outline, and it is a flat one: titles you can rename
+and reorder, with the whole book previewable in one view. That is as far as the
+structure goes. There are no nested documents, no synopsis cards, no metadata
+columns.
+
+There is no corkboard, no snapshots, no research folder, no split editor, no
+compile presets, no collections, no labels and status. Those are good features
+in the program that has them. Their absence here is not a gap waiting to be
+filled: it is what keeps this one small enough to open, learn in an afternoon,
+and then forget about while you write.
+
+The interface is deliberately plain. The typesetting is not.
+
+## What you get
+
+- **Three columns.** Chapter list, your text, notes for that chapter. All at
+  once.
+- **Markdown.** Plain text. Headings, bold, italic, quotes, lists, links,
+  images.
+- **Real typesetting.** Five book page sizes. Binding margins that keep text
+  out of the spine. Justified lines. Hyphenation. EB Garamond embedded in the
+  PDF.
+- **A cover.** Attach your own image, or generate a typographic one and watch
+  the preview change as you type.
+- **Editorial sections.** Cover, frontispiece, colophon. Filled in as fields,
+  laid out for you.
+- **Export.** PDF, EPUB, DOCX, ODT, HTML, Markdown, TXT, and AZW3 for Kindle
+  if Calibre is installed.
+- **Spell checking** that understands Italian and French elisions
+  (*dell'anima*, *l'uomo*).
+- **40 interface languages**, switched on the fly. Two themes — the plum of
+  RuscaLinux and a classic Standard one — each in a light and a dark version.
+- **Your files stay yours.** A `.rwr` project is a tar.gz of Markdown files.
+  Open it with anything, forever.
+
+## Built to be safe
+
+RuscaWriter is written in **Python 3 and GTK 4**. Nothing else is required to
+run it.
+
+- **It never goes online.** No network code, no telemetry, no accounts, no
+  update checks. It works with the machine unplugged.
+- **PDF, EPUB, ODT and DOCX are written using only the Python standard
+  library.** No third-party document engine, so no dependency chain to trust.
+- **Images are checked by content, not by file name.** A file claiming to be a
+  PNG is read as a PNG only if its bytes say so.
+- **Optional parts stay optional.** If Pillow or Pyphen is missing, the related
+  button is greyed out and everything else keeps working.
+- **Automated tests** cover the data model and every export path.
+
+See [SECURITY.md](SECURITY.md) for the full picture and how to report a
+problem.
+
+## Install and run
+
+Debian, Ubuntu, RuscaLinux:
 
 ```
 sudo apt install python3-gi gir1.2-gtk-4.0
+python3 ruscawriter.py
 ```
 
-For spell checking (optional but recommended), GTK 4 needs **libspelling**
-(the same library used by GNOME Text Editor); Gspell 1.x and GtkSpell do NOT
-work with GTK 4 because they are tied to GTK 3:
+Or take the `.deb` from the
+[Releases](https://github.com/ruscalinux-dev/ruscawriter/releases) page.
 
-```
-sudo apt install gir1.2-spelling-1 gir1.2-gtksource-5 hunspell-it hunspell-en-us
-```
+### Optional extras
 
-libspelling operates on a `GtkSource.View` editor, so **GtkSourceView 5**
-(`gir1.2-gtksource-5`) is also required: if present, the writing area uses it
-automatically; if missing, the editor still works but without spell checking.
+Each one adds a feature. Skip any of them and the program still runs.
 
-**Elision (it/fr).** GTK 4 spell checking (libspelling/ICU) splits words on the
-apostrophe, so forms such as *dell'anima* or *l'uomo* would be flagged as
-errors (the fragment *dell*, *l*, etc. is not a word). To avoid this, on startup
-RuscaWriter automatically adds the elision fragments for Italian and French to
-the personal Enchant word lists in `~/.config/enchant/<locale>.dic`, without
-touching the words you have added yourself. It is transparent: you don't have to
-do anything.
+| Install                                                 | Adds                                  |
+| ------------------------------------------------------- | ------------------------------------- |
+| `gir1.2-spelling-1 gir1.2-gtksource-5 hunspell-en-us`    | spell checking                        |
+| `python3-pil`                                            | cover generator, WebP in PDF and DOCX |
+| `python3-pyphen hyphen-en-us`                            | hyphenation in the PDF                |
+| `calibre`                                                | AZW3 export for Kindle                |
 
-Add the `hunspell-<language>` packages for the languages you need
-(e.g. `hunspell-fr`, `hunspell-de`): the editor will automatically show in the
-selector the languages for which a dictionary is installed.
-
-## Project structure
-
-```
-ruscawriter/
-├── ruscawriter.py            application launcher
-├── ruscawriter.desktop       entry for the GNOME applications menu
-├── README.md
-├── src/ruscawriter/          source code (Python package)
-│   ├── __init__.py          exposes main()
-│   ├── editor.py            GTK 4 graphical interface
-│   ├── model.py             data model and export (GTK-independent)
-│   ├── i18n.py              translations and languages
-│   └── paths.py             locates the lang/ and assets/ folders
-├── lang/                    40 translation files (.json)
-├── assets/                  CourierPrime font and icons
-│   └── icons/hicolor/        icon in every size (16…512 px + SVG)
-├── install-icons.sh         installs the icons into the system theme
-├── tests/                   automated tests
-│   └── test_ruscawriter.py
-└── docs/                    learning material
-    └── mini_ruscawriter.py   heavily commented teaching mini-editor (EN + IT)
-```
-
-## Tests
-
-```
-python3 tests/test_ruscawriter.py
-```
-
-## Icon in the applications menu
-
-The icon (the burgundy-and-gold fountain pen) is provided as a scalable SVG and
-as PNG in every standard size (16, 22, 24, 32, 48, 64, 128, 256, 512 px), in the
-`assets/icons/hicolor/` structure. To install it into the system, so it appears
-next to the program in the menu and dock:
-
-```
-sh install-icons.sh
-```
-
-Then copy `ruscawriter.desktop` into `~/.local/share/applications/` (the file
-uses `Icon=ruscawriter`, which the system will resolve with the icon you just
-installed).
-
-## Languages
-
-The interface is available in 40 languages, switchable on the fly from
-**View → Language**. Seven languages are fully translated: Italian, English,
-Spanish, French, German, Portuguese and Russian. The other languages start as
-"skeletons" that fall back to English: in the menu they are grouped in a
-separate section and marked as "not translated", making it clear that the
-interface will stay in English until they are completed. To translate one, just
-edit the corresponding file in `lang/` (and, if you like, add its code to
-`COMPLETE_LANGUAGES` in `src/ruscawriter/i18n.py`) — without touching the rest
-of the code.
-
-**Editorial sections.** From **File → Editorial sections…** you can add a cover
-image (PNG or JPEG), a frontispiece and a colophon. They are laid out together
-with the text in the order cover → frontispiece → chapters → colophon. The cover
-image appears in PDF, EPUB, HTML, DOCX and ODT (in the other formats, and in
-TXT/Markdown, only the textual sections remain); if you don't load an image, the
-generated graphic cover is used. Everything is embedded in the `.rwr` file,
-which stays self-contained.
-
-**Importing text as chapters.** From **File → Import as chapters…** (or
-`Ctrl+I`) you can choose one or more `.txt`/`.md` files: each is added as a new
-chapter at the end of the current project (one file = one chapter), without
-touching the other chapters. The same effect is achieved by **dragging** the
-files onto the writing area. The chapter title is taken from the file name.
-
-## Export formats
-
-TXT, Markdown, PDF, EPUB, ODT, DOCX, HTML (single file or multi-file with index)
-and AZW3 (Kindle, via Calibre if installed). PDF, EPUB, ODT and DOCX are
-generated with no external dependencies, using only the Python standard library.
-
-**Fonts.** The editor uses Courier Prime (monospace, typewriter style) for
-writing. Exported documents instead use a serif reading face, **EB Garamond**,
-better suited to a book: in the PDF the font is embedded (with the real widths
-of each glyph, since it is a proportional font), while EPUB and HTML request it
-by name with a fallback to system serifs. Both fonts are free, released under
-the **SIL Open Font License 1.1**, and their licence texts are in `assets/`
-next to the `.ttf` files.
-
-## Images in chapters
-
-With **Edit → Insert image…** (`Ctrl+Shift+I`) you can attach a picture in
-PNG, JPEG or WebP to the current chapter. The file is copied *into* the
-project (it travels inside the `.rwr` archive, so the project stays a single
-portable file) and a standard Markdown line appears at the cursor:
-
-```
-![caption](img_001.png)
-```
-
-The caption is free text you can edit. Every export renders the image as a
-real figure: in the PDF it is centered and scaled to the text width with the
-caption in italics; EPUB, ODT, DOCX and HTML embed it; the exported Markdown
-copies the images to a sibling folder; plain TXT shows the caption in square
-brackets. The cover image (File → Editorial sections) accepts the same three
-formats. Note: Word cannot display WebP, so for DOCX (and for the PDF) WebP
-pictures are converted to JPEG automatically when Pillow is installed;
-without Pillow they are simply omitted from those two formats, keeping the
-caption.
+Add more `hunspell-<lang>` and `hyphen-<lang>` for the languages you write in.
+Spell checking needs **libspelling** (the one GNOME Text Editor uses); Gspell
+and GtkSpell are GTK 3 and will not work.
 
 ## Keyboard shortcuts
 
-The main functions have a shortcut, useful especially in full screen (F11),
-where drop-down menus may fail to open due to known limitations of GTK popovers
-with some window managers:
+Useful in full screen, where GTK menus can be awkward with some window
+managers.
 
-- `Ctrl+N` new, `Ctrl+O` open, `Ctrl+S` save, `Ctrl+I` import as chapters
-- `Ctrl+Shift+N` add chapter, `F2` rename chapter
-- `Ctrl+F` find and replace
-- `Ctrl+Shift+I` insert image into the chapter
-- `Ctrl++` / `Ctrl+-` increase/decrease text size
-- `Ctrl+E` preview, `Ctrl+Shift+E` preview whole document
-- `Ctrl+L` / `Ctrl+R` show/hide chapters/notes column
-- `F11` full screen
-- `Ctrl+Shift+D` dark theme
-- `F1` About
+- `Ctrl+N` new · `Ctrl+O` open · `Ctrl+S` save · `Ctrl+I` import as chapters
+- `Ctrl+Shift+N` add chapter · `F2` rename chapter
+- `Ctrl+F` find and replace · `Ctrl+Shift+I` insert image
+- `Ctrl++` / `Ctrl+-` text size
+- `Ctrl+E` preview · `Ctrl+Shift+E` preview whole document
+- `Ctrl+L` / `Ctrl+R` show or hide a column · `F11` full screen
+- `Ctrl+Shift+D` light or dark (the theme itself is under View → Theme)
+- `F1` About · `Shift+F1` Markdown guide
+
+## Languages
+
+40 interface languages, switched from **View → Language**. Seven are complete:
+English, Italian, Spanish, French, German, Portuguese, Russian. The rest fall
+back to English and are marked as such in the menu.
+
+To translate one, copy `lang/en.json`, translate the values, leave the keys
+alone. Nothing else in the code needs to change.
+
+## Markdown
+
+Headings, bold, italic, code, quotes, lists, links and images — the set shown
+in the guide under Help (`Shift+F1`).
+
+Links are written `[label](address)`. The address is printed in full next to
+the label and is never clickable: a book gets printed, and on paper an
+address nobody can see is a source nobody can reach.
+
+The rules live in one place, `classify_md_line()` and `parse_inline()` in
+`src/ruscawriter/model.py`. Every reader goes through them: the PDF typesetter,
+the HTML and EPUB exports, the ODT and DOCX exports, the preview, and the live
+highlighting in the editor. That is what makes the preview trustworthy — what
+you see highlighted while typing is what the exports will produce.
+
+## Fonts
+
+RuscaWriter ships two: a typewriter face and a reading serif. Under
+View → Fonts you choose **two fonts separately** — the one you write and read
+in on screen, and the one the exported PDF is set in. They are different jobs:
+you spend hours on a draft, while the PDF is the book.
+
+Either built-in font can be used for either job, and so can any TrueType family
+installed on your machine. The export font is embedded in the PDF, so the file
+reads the same on any computer.
+
+Only TrueType (`.ttf`) families are listed. The PDF writer embeds glyph
+outlines in that format, so an OpenType/CFF face could be shown on screen but
+not put inside the PDF, and offering it would promise more than it can keep.
+
+## PDF
+
+Beside the printed table of contents, the exported PDF carries a real outline:
+the chapter tree readers show in their sidebar, so a long manuscript can be
+navigated without scrolling. The reader is asked to open that panel by default.
+
+## Themes
+
+Two colour families, picked from **View → Theme**:
+
+Five themes, named after five gems. The names are translated, and each
+carries a dot in its own colour:
+
+- **Ametista** — the plum of RuscaLinux. The bars keep the full colour, because
+  that is the distribution's face; the page does not.
+- **Rubino** — deep red on paper with a rose veil.
+- **Zaffiro** — blue, deliberately low in saturation. Blue is the colour the eye
+  focuses worst, so here the accent stays on the selection alone.
+- **Giada** — sage green, the most restful of the five.
+- **Ambra** — honey and brass, the warmest.
+
+The gem changes, the discipline does not: no pure white, no pure black, and body
+text between 12:1 and 14:1 — not the 21:1 the extremes give you. Full white
+glares; white on black makes the letters bloom. Each theme carries its own
+paper, ink and night ground, tinted with its stone.
+
+Light or dark is a separate choice (`Ctrl+Shift+D`), so the two combine. Both are remembered between sessions.
+
+### Making your own
+
+Themes also live in a folder — `~/.config/ruscawriter/themes/` — one small text
+file each. A theme is a name and seven colours — and, if you want, the paper and the bars
+as well:
+
+```
+nome = Standard verde
+accento        = #2E7D4F
+accento-scuro  = #1B5233
+accento-chiaro = #C7E3D3
+accento-acceso = #8FD3AC
+codice         = #2A6B48
+velo-chiaro    = #E4F2E9
+velo-scuro     = #23372C
+```
+
+Save it with a `.theme` extension and it appears under View → Theme on the next
+start, in both a light and a dark version — those are built from your seven
+colours, not written by hand. The keys work in Italian or English. The folder
+comes with a commented example to copy, and a file with a mistake in it is
+reported on startup rather than silently ignored.
+
+Colours live in one place, `theme_palette()` in `src/ruscawriter/model.py`. It
+returns roles — accent, editor background, headings — not colour names, and the
+stylesheet is generated from them. A third family is a new branch in that
+function and a name in `THEMES`; nothing else changes.
 
 ## How it was made
 
-RuscaWriter was designed and directed by the RuscaLinux project: the concept,
-the three-column layout, the visual design and interface, the light and dark
-plum theme, the feature set, the export pipeline and the editorial decisions
-are all human work. The Python implementation was then produced with the help
-of AI tools, working from detailed step-by-step direction, and reviewed and
-tested by a human at every stage.
+I designed RuscaWriter: the idea, the three-column layout, the visual design,
+the plum theme, the feature set, the typesetting decisions, the export
+pipeline. The Python code was written with the help of AI tools, from my
+step-by-step direction, and reviewed and tested at every stage.
 
-We mention this openly because we think it's the honest way to describe how
-the software was built — a human deciding what to make, how it should look and
-how it should work, and AI used as a tool to write the code.
+I say so openly because it is the honest description of how this was built: a
+person deciding what to make and how it should work, and AI used as a tool to
+write the code.
+
+— Nunzio Curcuruto
 
 ## Contributing
 
-Contributions are welcome: bug reports, translations, fixes and new features.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report an issue, run the tests
-and propose a change.
+Bug reports, translations, fixes and features are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md). Run the tests with
+`python3 tests/test_ruscawriter.py`.
 
 ## Licence
 
-Copyright © 2026 Nunzio Curcuruto.
+Copyright © 2026 Nunzio Curcuruto. Free software under the **GNU General Public
+License v3 or later** — full text in [LICENSE](LICENSE).
 
-RuscaWriter is free software released under the **GNU General Public License
-v3 or later (GPL-3.0-or-later)**. The full text is in the [LICENSE](LICENSE)
-file.
+The bundled fonts, EB Garamond and Courier Prime, are under the **SIL Open Font
+License 1.1**; their texts are in `assets/`.
 
-RuscaWriter was designed, including its visual design and interface, and
-directed by the RuscaLinux project. The Python implementation was produced
-with AI tools following detailed, step-by-step human direction, review, and
-testing.
-
-The included fonts (EB Garamond, Courier Prime) are released under the **SIL
-Open Font License 1.1**; their texts are in `assets/`.
+- Website: <https://www.ruscalinux.org/ruscawriter/>
+- Support the project: <https://ko-fi.com/ruscalinuxdev>

@@ -1,104 +1,122 @@
-# Contributing to RuscaWriter
+# Contributing
 
-🇮🇹 [Leggilo in italiano](CONTRIBUTING.it.md)
+Bug reports, ideas, translations, fixes and new features are all welcome.
 
-Thank you for your interest in **RuscaWriter**, the three-column writing
-editor of the RuscaLinux project. Contributions are welcome: bug reports,
-ideas, translations, fixes and new features.
+RuscaWriter is free software under the **GNU GPL v3 or later**. By
+contributing, you agree your work is distributed under the same licence.
 
-RuscaWriter is free software released under the **GNU GPL v3+** license. By
-contributing, you agree that your contribution is distributed under the same
-license.
+**On method:** the existing code was written with AI tools under step-by-step
+human direction. Contributions made the same way are as welcome as those typed
+by hand. Either way, review and test before opening a pull request.
 
-**A note on method:** the existing RuscaWriter code was produced with the
-help of AI under step-by-step human direction. Contributions written the same
-way are as welcome as those written entirely by hand — in either case, review
-and test your changes before opening a pull request, and make sure they are
-compatible with the GPL v3+ license.
+## Reporting a bug
 
-## How to report a problem (issue)
+Open an issue and say:
 
-Open an *issue* on GitHub describing:
+- what you expected, and what happened instead;
+- how to make it happen again;
+- your distribution, and your Python and GTK 4 versions;
+- the error message, if there is one. Start the program from a terminal with
+  `python3 ruscawriter.py` to see it.
 
-- what you expected and what happened instead;
-- the steps to reproduce the problem;
-- your distribution and version (e.g. RuscaLinux, Debian 13), the version of
-  Python and of GTK 4;
-- if possible, the full error message (start the program from a terminal with
-  `python3 ruscawriter.py` to see it).
+Check first whether someone has already reported it.
 
-Before opening a new issue, check whether a similar one already exists.
+## Proposing a change
 
-## How to propose a change (pull request)
+1. Fork, then branch: `git checkout -b fix-pdf-export`.
+2. Keep the change focused. One pull request, one topic.
+3. Run the tests. They must all pass.
+4. Write the commit message as described below.
+5. Open the pull request. If it closes an issue, link it.
 
-1. *Fork* the repository and create a dedicated branch
-   (e.g. `git checkout -b fix-pdf-export`).
-2. Make your changes, keeping them **focused**: one pull request per topic.
-   It is easier to review and to accept.
-3. **Run the tests** before submitting (see below): they must all stay green.
-4. Write a clear commit message explaining *what* changes and *why*.
-5. Open the pull request describing the change and, if it fixes an issue,
-   link it.
+## Commit messages
 
-## Development environment
+One commit, one thing, one line. The line starts with one of seven words.
 
-RuscaWriter requires Python 3, PyGObject and GTK 4. On
-Debian/Ubuntu/RuscaLinux:
+| Start with   | For                                             | In the changelog |
+| ------------ | ----------------------------------------------- | ---------------- |
+| `added:`     | something new you can use                       | yes              |
+| `changed:`   | something that existed and now works differently | yes             |
+| `fixed:`     | a bug gone                                      | yes              |
+| `removed:`   | something taken away                            | yes              |
+| `internal:`  | refactoring, tests, cleanups                    | no               |
+| `docs:`      | README, SECURITY, man page, comments            | no               |
+| `packaging:` | build-deb.sh, icons, .desktop, dependencies     | no               |
 
 ```
-sudo apt install python3-gi gir1.2-gtk-4.0
+added: LaTeX export
+fixed: cover preview was blurry on HiDPI screens
+internal: reworked the PDF writer
 ```
 
-For spell checking (optional):
+Lowercase after the colon. No full stop. Under 72 characters. If you need the
+word "and", that is two commits. Anything longer goes in a paragraph below,
+after a blank line.
+
+The first four are the ones that end up in the changelog. A good commit line is
+a changelog line already written.
+
+To load the template with these reminders:
 
 ```
-sudo apt install gir1.2-gtksource-5 gir1.2-spelling-1 hunspell-en-us hunspell-it
-```
-
-To run from source, from the project root:
-
-```
-python3 ruscawriter.py
+git config commit.template .gitmessage
 ```
 
 ## Running the tests
 
-The data model and the exports are covered by a test suite that **does not
-require GTK** (it imports only the package modules). From the project root:
+The data model and the exports are tested without GTK:
 
 ```
 python3 tests/test_ruscawriter.py
 ```
 
-All tests must pass. If you add a feature to the model or to the exports,
-add a test that covers it as well.
+They must all pass. If you add something to the model or to an export, add a
+test for it.
 
-## Project structure
+## Where things are
 
-- `ruscawriter.py` — application launcher.
-- `src/ruscawriter/editor.py` — graphical interface (GTK 4).
-- `src/ruscawriter/model.py` — data model and exports (independent of GTK;
-  this is where the tests run).
-- `src/ruscawriter/i18n.py` + `lang/*.json` — translations.
+- `ruscawriter.py` — launcher.
+- `src/ruscawriter/editor.py` — the GTK 4 interface.
+- `src/ruscawriter/model.py` — data model and exports. No GTK. This is what
+  the tests run against.
+- `src/ruscawriter/i18n.py` and `lang/*.json` — translations.
 - `tests/` — the test suite.
-- `docs/` — a heavily commented example mini-editor (bilingual EN + IT).
+- `docs/` — the images used by the README.
 
 ## Code style
 
-- Follow the style already present in the file you are editing.
-- Prefer small, readable changes over large rewrites.
-- Bilingual comments are fine: the project was born in Italian and is
-  bilingual (English + Italian).
+Follow the style of the file you are editing. Prefer small readable changes to
+large rewrites.
 
-## Translating the interface
+## Translating
 
-To add or complete a language, copy `lang/en.json` to `lang/<code>.json`,
-translate the values (leaving the keys and placeholders such as `{p}` or
-`{n}` untouched), and — if the translation is complete — add the language
-code to `COMPLETE_LANGUAGES` in `src/ruscawriter/i18n.py`. No change to the
-rest of the code is needed.
+Copy `lang/en.json` to `lang/<code>.json`. Translate the values, leave the keys
+and the placeholders (`{p}`, `{n}`) alone. If the translation is complete, add
+the code to `COMPLETE_LANGUAGES` in `src/ruscawriter/i18n.py`. Nothing else
+changes.
+
+## Making a release
+
+For maintainers, by hand:
+
+```
+# 1. version and date — the only two lines to edit
+#    APP_VERSION_SHORT and APP_RELEASE_DATE in src/ruscawriter/model.py
+
+python3 tests/test_ruscawriter.py     # 2. must pass before anything else
+                                      # 3. write the CHANGELOG entry
+git add -A && git commit -m "RuscaWriter 1.0"
+git tag -a v1.0 -m "RuscaWriter 1.0"
+./build-deb.sh                        # 4. the .deb package
+sha256sum ruscawriter_*.deb > SHA256SUMS
+git push && git push --tags
+```
+
+The version and the release date live in one place: `APP_VERSION_SHORT` and
+`APP_RELEASE_DATE` in `src/ruscawriter/model.py`. The About screen, the window
+title, the `.deb` and the man page all follow from there — never edit them
+anywhere else.
 
 ## Questions
 
-For questions or broader proposals, open an issue with the "discussion" label
-or write to info@ruscalinux.org.
+Open an issue with the "discussion" label, or write to info@ruscalinux.org.
