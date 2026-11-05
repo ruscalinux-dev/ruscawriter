@@ -1,6 +1,6 @@
 > **This repository is archived.** RuscaWriter is now part of RuscaLinux.
 >
-> - Website: https://www.ruscalinux.org/ruscawriter/
+> - Website: https://www.ruscalinux.org
 > - Source code: https://github.com/ruscalinux/ruscalinux
 > - Downloads: https://sourceforge.net/projects/ruscalinux/
 
